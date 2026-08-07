@@ -808,6 +808,7 @@ async function preloadCronograma() {
         const cronogramaFile = `Cronograma ${monthName}.xlsx`;
         const url = encodeURI('Cronograma de Tareas/' + cronogramaFile) + '?t=' + Date.now();
         const response = await fetch(url);
+        console.log(`XLSX_FETCH url=${url} status=${response.status}`);
         if (!response.ok) return;
         const arrayBuffer = await response.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, {type: 'array'});
@@ -868,6 +869,7 @@ async function loadCronogramaAssignments(gestorName, gestorShift) {
         const cronogramaFile = `Cronograma ${monthName}.xlsx`;
         const url = encodeURI('Cronograma de Tareas/' + cronogramaFile) + '?t=' + Date.now();
         const response = await fetch(url);
+        console.log(`XLSX_FETCH url=${url} status=${response.status}`);
         if (!response.ok) throw new Error("Fallo al cargar cronograma");
         const arrayBuffer = await response.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, {type: 'array'});
@@ -1096,6 +1098,7 @@ async function loadExcelTasks() {
     try {
         const url = encodeURI('Tareas Riesgo/Tareas de Riesgo.xlsx') + '?t=' + new Date().getTime();
         const response = await fetch(url);
+        console.log(`XLSX_FETCH url=${url} status=${response.status}`);
         if(!response.ok) throw new Error("Error HTTP " + response.status);
         const arrayBuffer = await response.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, {type: 'array'});
@@ -1241,6 +1244,7 @@ async function loadSchedule() {
     try {
         const url = encodeURI('Horario/Horario 2026.xlsx') + '?t=' + Date.now();
         const response = await fetch(url);
+        console.log(`XLSX_FETCH url=${url} status=${response.status}`);
         if(!response.ok) throw new Error("Fallo red");
         const arrayBuffer = await response.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, {type: 'array'});
@@ -1405,6 +1409,7 @@ async function loadSchedule() {
                     }
 
                     let isCurrentUser = (currentUser && namesMatch(gestorName, currentUser.name));
+                    if (isCurrentUser) console.log('current user matched = true');
                     
                     if (currentUser && currentUser.role === 'Gestor' && !isCurrentUser) continue;
 
@@ -1455,6 +1460,7 @@ async function loadSchedule() {
 
 function loadTeletrabajo() {
     fetch('Teletrabajo/Teletrabajo.xlsx?v=' + Date.now())
+        .then(res => { console.log(`XLSX_TELEWORK_FETCH status=${res.status}`); return res; })
         .then(res => {
             if(!res.ok) throw new Error("No se encontró el archivo de Teletrabajo");
             return res.arrayBuffer();
