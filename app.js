@@ -816,8 +816,11 @@ async function preloadCronograma() {
         if (sheetName) {
             globalCronogramaData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: "" });
             // Re-render dashboard just in case it loaded before this finished
-            if (document.getElementById('monitoreoView').style.display !== 'none') {
-                renderDashboardCards();
+            const viewMonitoreo = document.getElementById('view-monitoreo');
+            if (viewMonitoreo && viewMonitoreo.style.display !== 'none') {
+                if (typeof renderActiveSessionsDashboard === 'function') {
+                    renderActiveSessionsDashboard();
+                }
             }
         }
     } catch(e) {
