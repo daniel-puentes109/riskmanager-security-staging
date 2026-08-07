@@ -1,26 +1,26 @@
 [
   {
-    "uid": "staging-uid-gestor-alpha",
-    "date": "2026-08-06",
-    "setId": "set-b-tarde",
-    "shiftType": "tarde_lv"
-  },
-  {
-    "uid": "staging-uid-gestor-alpha",
+    "uid": "known-staging-uid",
     "date": "2026-08-07",
-    "setId": "set-a-manana",
+    "setId": "set-1-manana",
     "shiftType": "manana_lv"
   },
   {
-    "uid": "staging-uid-gestor-alpha",
+    "uid": "uid-without-assignment",
+    "date": "2026-08-07",
+    "setId": null,
+    "shiftType": null
+  },
+  {
+    "uid": "known-staging-uid",
     "date": "2026-08-08",
-    "setId": "set-a-manana",
+    "setId": "set-inexistente",
     "shiftType": "sabado"
   },
   {
-    "uid": "staging-uid-gestor-beta",
-    "date": "2026-08-07",
-    "setId": "set-b-tarde",
-    "shiftType": "tarde_lv"
+    "uid": "*",
+    "date": "*",
+    "setId": "set-1-manana",
+    "shiftType": "manana_lv"
   }
 ]

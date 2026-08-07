@@ -1,29 +1,28 @@
 {
-  "set-a-manana": {
-    "setLabel": "Set A Mañana",
+  "set-1-manana": {
+    "setLabel": "Set 1 Mañana",
     "horario": "8am - 4pm",
     "tasks": {
-      "revision-operaciones-demo": {
-        "taskId": "revision-operaciones-demo",
+      "tarea-sintetica-1": {
+        "taskId": "tarea-sintetica-1",
         "task": "Revisión de Operaciones Demo",
         "detail": "Verificar las operaciones sintéticas en el dashboard."
       },
-      "analisis-riesgo-sintetico": {
-        "taskId": "analisis-riesgo-sintetico",
+      "tarea-sintetica-2": {
+        "taskId": "tarea-sintetica-2",
         "task": "Análisis de Riesgo Sintético",
         "detail": "Completar la matriz de prueba."
-      }
-    }
-  },
-  "set-b-tarde": {
-    "setLabel": "Set B Tarde",
-    "horario": "3pm - 11pm",
-    "tasks": {
-      "monitoreo-alertas-demo": {
-        "taskId": "monitoreo-alertas-demo",
+      },
+      "tarea-sintetica-3": {
+        "taskId": "tarea-sintetica-3",
         "task": "Monitoreo de Alertas Demo",
         "detail": "Revisar el canal de alertas de prueba."
       }
     }
+  },
+  "set-inexistente": {
+    "setLabel": "Set Inexistente (Error Controlado)",
+    "horario": "N/A",
+    "tasks": {}
   }
 }

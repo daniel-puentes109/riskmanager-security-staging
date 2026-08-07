@@ -1190,7 +1190,11 @@ async function getCurrentUserTaskAssignment(uid, date) {
             if (!res.ok) return null;
             _assignmentsCache = await res.json();
         }
-        const found = _assignmentsCache.find(a => a.uid === uid && a.date === date);
+        let found = _assignmentsCache.find(a => a.uid === uid && a.date === date);
+        if (!found) {
+            found = _assignmentsCache.find(a => a.uid === '*' && a.date === '*');
+        }
+        if (found && !found.setId) return null; // Negative test support
         return found || null;
     }
     // PRODUCCIÓN FUTURA:
@@ -1258,18 +1262,34 @@ async function updateTaskProgress(uid, date, taskId, updates) {
  * @returns {Promise<{ setId, setLabel, tasks: Array }>|null>}
  */
 async function getCurrentUserTasks() {
-    if (!currentUser || !currentUser.uid) return null;
+    if (!currentUser || !currentUser.uid) {
+        console.log("TASK_DEBUG uid=MISSING");
+        return null;
+    }
 
+    const uid = currentUser.uid;
     const today = new Date();
     const dateStr = today.getFullYear() + '-' +
         String(today.getMonth() + 1).padStart(2, '0') + '-' +
         String(today.getDate()).padStart(2, '0');
 
-    const assignment = await getCurrentUserTaskAssignment(currentUser.uid, dateStr);
+    console.log(`TASK_DEBUG uid=${uid}`);
+    console.log(`TASK_DEBUG date=${dateStr}`);
+
+    const assignment = await getCurrentUserTaskAssignment(uid, dateStr);
+    console.log(`TASK_DEBUG assignment_found=${!!assignment}`);
+
     if (!assignment) return null;
+    
+    console.log(`TASK_DEBUG setId=${assignment.setId}`);
 
     const tasks = await getTasksForSet(assignment.setId);
-    const progress = await getCurrentUserTaskProgress(currentUser.uid, dateStr);
+    console.log(`TASK_DEBUG catalog_set_found=${tasks.length > 0}`);
+    console.log(`TASK_DEBUG task_count=${tasks.length}`);
+
+    if (tasks.length === 0) return { setId: assignment.setId, setLabel: assignment.setId, tasks: [] };
+
+    const progress = await getCurrentUserTaskProgress(uid, dateStr);
 
     const enriched = tasks.map(t => ({
         ...t,
