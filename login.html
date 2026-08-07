@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Risk Manager | Iniciar Sesión</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Boxicons for UI icons -->
+    <link href='https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css' rel='stylesheet'>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="login.css">
+</head>
+<body class="login-body">
+    <!-- Mobile Blocker -->
+    <div id="mobileBlocker">
+        <i class='bx bx-desktop'></i>
+        <h2>Acceso Restringido</h2>
+        <p>Esta plataforma ha sido diseñada exclusivamente para uso en computadoras de escritorio.</p>
+        <p style="margin-top: 10px; font-size: 14px;">Por favor, ingresa desde tu PC o Laptop para continuar.</p>
+    </div>
+
+    <!-- Browser Blocker -->
+    <div id="browserBlocker" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #0B0E14; z-index: 99999; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; font-family: 'Inter', sans-serif;">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/e/e1/Google_Chrome_icon_%28February_2022%29.svg" alt="Chrome Logo" style="width: 100px; margin-bottom: 20px;">
+        <h2 style="font-size: 28px; margin-bottom: 15px; color: #F3F4F6;">Navegador No Compatible</h2>
+        <p style="font-size: 16px; color: #9CA3AF; max-width: 500px; line-height: 1.5;">Esta plataforma de monitoreo ha sido optimizada para funcionar <strong>estrictamente en Google Chrome</strong>.</p>
+        <p style="margin-top: 15px; font-size: 14px; color: #3B82F6;">Por favor, copia el enlace y ábrelo utilizando Google Chrome.</p>
+    </div>
+
+    <script>
+        (function checkBrowser() {
+            var ua = navigator.userAgent;
+            var isChrome = /Chrome|CriOS/i.test(ua) && !/Edg|OPR/i.test(ua);
+            
+            if (!isChrome) {
+                document.addEventListener('DOMContentLoaded', function() {
+                    document.getElementById('browserBlocker').style.display = 'flex';
+                    var lg = document.querySelector('.login-container');
+                    if (lg) lg.style.display = 'none';
+                    var mob = document.getElementById('mobileBlocker');
+                    if (mob) mob.style.display = 'none';
+                });
+            }
+        })();
+    </script>
+
+    <!-- Animated background elements -->
+    <div class="blob blob-1"></div>
+    <div class="blob blob-2"></div>
+
+    <div class="login-container glass-panel">
+        <!-- Panel de Inicio de Sesión -->
+        <div id="loginPanel" class="auth-panel active-panel">
+            <div class="login-header">
+                <img src="assets/src/img/logo.svg" alt="Risk Manager Logo" class="logo-icon" style="width: 55px; height: auto;">
+                <h1 class="logo-text" style="font-size: 32px; margin-top: 10px;">Risk <span>Manager</span></h1>
+                <p class="login-subtitle">Iniciar Sesión</p>
+            </div>
+
+            <form id="loginForm" class="login-form">
+                <div class="input-group">
+                    <i class='bx bx-envelope'></i>
+                    <input type="email" id="loginEmail" placeholder="Correo Electrónico" required>
+                </div>
+                
+                <div class="input-group">
+                    <i class='bx bx-lock-alt'></i>
+                    <input type="password" id="loginPassword" placeholder="Contraseña" required>
+                    <i class='bx bx-show toggle-password' style="position: absolute; right: 14px; left: auto; cursor: pointer;"></i>
+                </div>
+
+                <div style="text-align: right; margin-bottom: 15px;">
+                    <a href="#" class="auth-link" onclick="switchPanel('forgotPanel')">¿Olvidaste tu contraseña?</a>
+                </div>
+
+                <button type="submit" class="btn btn-primary" style="margin-top: 5px; font-size: 16px; padding: 12px;">
+                    Ingresar
+                </button>
+                <p id="loginError" class="login-error-msg" style="display: none; color: var(--danger); text-align: center; margin-top: 10px;"></p>
+            </form>
+
+            <div class="login-footer" style="margin-top: 20px; border-top: 1px solid var(--glass-border); padding-top: 15px;">
+                <p style="color: var(--text-secondary);">¿No tienes cuenta? <a href="#" class="auth-link" onclick="switchPanel('registerPanel')">Regístrate aquí</a></p>
+            </div>
+        </div>
+
+        <!-- Panel de Registro -->
+        <div id="registerPanel" class="auth-panel" style="display: none;">
+            <div class="login-header">
+                <i class='bx bx-user-plus logo-icon' style="font-size: 48px;"></i>
+                <h1 class="logo-text" style="font-size: 24px; margin-top: 10px;">Crear Cuenta</h1>
+                <p class="login-subtitle">Registro de Gestor</p>
+            </div>
+
+            <form id="registerForm" class="login-form">
+                <div class="input-group">
+                    <i class='bx bx-user'></i>
+                    <input type="text" id="regName" placeholder="Nombre Completo" required>
+                </div>
+
+                <div class="input-group">
+                    <i class='bx bx-envelope'></i>
+                    <input type="email" id="regEmail" placeholder="Correo Electrónico" required>
+                </div>
+
+                <div class="input-group">
+                    <i class='bx bx-lock-alt'></i>
+                    <input type="password" id="regPassword" placeholder="Contraseña" required>
+                    <i class='bx bx-show toggle-password' style="position: absolute; right: 14px; left: auto; cursor: pointer;"></i>
+                </div>
+
+                <div class="input-group">
+                    <i class='bx bx-lock-alt'></i>
+                    <input type="password" id="regConfirmPassword" placeholder="Confirmar Contraseña" required>
+                    <i class='bx bx-show toggle-password' style="position: absolute; right: 14px; left: auto; cursor: pointer;"></i>
+                </div>
+
+                <div class="input-group">
+                    <i class='bx bx-briefcase'></i>
+                    <select id="regRole" required>
+                        <option value="" disabled selected>Rol en el Sistema</option>
+                        <option value="Gestor">Gestor</option>
+                        <option value="Supervisor">Supervisor</option>
+                    </select>
+                </div>
+
+                <button type="submit" class="btn btn-primary" style="margin-top: 20px; font-size: 16px; padding: 12px;">
+                    Registrarse
+                </button>
+                <p id="registerError" class="login-error-msg" style="display: none; color: var(--danger); text-align: center; margin-top: 10px;"></p>
+                <p id="registerSuccess" class="login-error-msg" style="display: none; color: var(--success); text-align: center; margin-top: 10px;"></p>
+            </form>
+
+            <div class="login-footer" style="margin-top: 20px; border-top: 1px solid var(--glass-border); padding-top: 15px;">
+                <p style="color: var(--text-secondary);">¿Ya tienes cuenta? <a href="#" class="auth-link" onclick="switchPanel('loginPanel')">Volver al Login</a></p>
+            </div>
+        </div>
+
+        <!-- Panel de Olvido de Contraseña -->
+        <div id="forgotPanel" class="auth-panel" style="display: none;">
+            <div class="login-header">
+                <i class='bx bx-key logo-icon' style="font-size: 48px;"></i>
+                <h1 class="logo-text" style="font-size: 24px; margin-top: 10px;">Recuperar</h1>
+                <p class="login-subtitle">Enviaremos instrucciones a tu correo</p>
+            </div>
+
+            <form id="forgotForm" action="https://formsubmit.co/maria.sanchez@virtualsoft.tech" method="POST" class="login-form">
+                <input type="hidden" name="_subject" value="Solicitud de Restablecimiento de Contraseña">
+                <input type="hidden" name="_captcha" value="false">
+                
+                <div class="input-group">
+                    <i class='bx bx-envelope'></i>
+                    <input type="email" name="Correo_Solicitante" id="forgotEmail" placeholder="Ingresa tu correo" required>
+                </div>
+
+                <button type="submit" class="btn btn-primary" style="margin-top: 20px; font-size: 16px; padding: 12px;">
+                    Enviar Enlace
+                </button>
+                <p id="forgotMessage" class="login-error-msg" style="display: none; text-align: center; margin-top: 15px; font-weight: 500;"></p>
+            </form>
+
+            <div class="login-footer" style="margin-top: 20px; border-top: 1px solid var(--glass-border); padding-top: 15px;">
+                <a href="#" class="auth-link" onclick="switchPanel('loginPanel')"><i class='bx bx-arrow-back'></i> Volver al Login</a>
+            </div>
+        </div>
+    </div>
+
+    <!-- SheetJS (Excel Parser) -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <script src="firebase-config.js?v=20260730_v2"></script>
+    <script src="login.js?v=20260730_v2"></script>
+</body>
+</html>
