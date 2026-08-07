@@ -1122,128 +1122,248 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock(); // Initial call
 
-// Data source real
+// =============================================================================
+// CAPA DE ABSTRACCIÓN DE TAREAS — 3 DOMINIOS SEPARADOS
+// =============================================================================
+// Dominio 1 (taskCatalog):    Catálogo de tareas por SET. Sin PII.
+// Dominio 2 (taskAssignments): Asignación uid→fecha→setId. Generada por importador.
+// Dominio 3 (taskProgress):   Estado del Gestor. Solo status/notes.
+//
+// STAGING: consume staging_task_catalog.json + staging_task_assignments.json (datos sintéticos)
+// PRODUCCIÓN FUTURA: misma interfaz, fuente = Firebase /taskAssignments/{auth.uid}/{date}
+//
+// La autorización definitiva usa auth.uid, no currentUser.name.
+// =============================================================================
+
+const TASK_DATA_SOURCE = 'staging'; // 'staging' | 'firebase' (futuro)
+const STAGING_CATALOG_URL   = 'staging_task_catalog.json';
+const STAGING_ASSIGNMENTS_URL = 'staging_task_assignments.json';
+
+// Cache interno (evita múltiples fetches)
+let _catalogCache = null;
+let _assignmentsCache = null;
+let _progressCache = {};   // { uid_date_taskId: { status, notes, lastUpdated } }
+
+/**
+ * Dominio 1: Devuelve las tareas de un SET del catálogo.
+ * En STAGING: lee staging_task_catalog.json
+ * En producción futura: leerá /taskCatalog/{setId} en Firebase
+ * @param {string} setId - ID normalizado del SET (ej. "set-1-manana")
+ * @returns {Promise<{taskId, task, detail, horario}[]>}
+ */
+async function getTasksForSet(setId) {
+    if (TASK_DATA_SOURCE === 'staging') {
+        if (!_catalogCache) {
+            const res = await fetch(STAGING_CATALOG_URL + '?t=' + Date.now());
+            if (!res.ok) throw new Error('staging_task_catalog.json no disponible');
+            _catalogCache = await res.json();
+        }
+        const setData = _catalogCache[setId];
+        if (!setData || !setData.tasks) return [];
+        return Object.values(setData.tasks).map(t => ({
+            taskId:  t.taskId,
+            task:    t.task,
+            detail:  t.detail,
+            horario: t.horario || setData.horario || '',
+            setLabel: setData.setLabel || setId,
+        }));
+    }
+    // PRODUCCIÓN FUTURA:
+    // const snap = await firebase.database().ref('taskCatalog/' + setId + '/tasks').once('value');
+    // return snap.exists() ? Object.values(snap.val()) : [];
+    return [];
+}
+
+/**
+ * Dominio 2: Devuelve la asignación de un Gestor para una fecha específica.
+ * Un Gestor puede tener como máximo 1 SET por fecha específica (cardinalidad 1:1 por fecha).
+ * En STAGING: lee staging_task_assignments.json
+ * En producción futura: leerá /taskAssignments/{uid}/{date} en Firebase
+ * @param {string} uid  - Firebase auth.uid del Gestor
+ * @param {string} date - Fecha en formato YYYY-MM-DD
+ * @returns {Promise<{uid, date, setId, shiftType}|null>}
+ */
+async function getCurrentUserTaskAssignment(uid, date) {
+    if (TASK_DATA_SOURCE === 'staging') {
+        if (!_assignmentsCache) {
+            const res = await fetch(STAGING_ASSIGNMENTS_URL + '?t=' + Date.now());
+            if (!res.ok) return null;
+            _assignmentsCache = await res.json();
+        }
+        const found = _assignmentsCache.find(a => a.uid === uid && a.date === date);
+        return found || null;
+    }
+    // PRODUCCIÓN FUTURA:
+    // const snap = await firebase.database().ref('taskAssignments/' + uid + '/' + date).once('value');
+    // return snap.exists() ? snap.val() : null;
+    return null;
+}
+
+/**
+ * Dominio 3: Lee el progreso del Gestor para una fecha.
+ * Escrito únicamente por el Gestor en sesión. Solo campos: status, notes, lastUpdated.
+ * En STAGING: usa localStorage como persistencia efímera
+ * En producción futura: leerá /taskProgress/{uid}/{date} en Firebase
+ * @param {string} uid  - Firebase auth.uid del Gestor
+ * @param {string} date - Fecha en formato YYYY-MM-DD
+ * @returns {Promise<{[taskId]: {status, notes, lastUpdated}}>}
+ */
+async function getCurrentUserTaskProgress(uid, date) {
+    if (TASK_DATA_SOURCE === 'staging') {
+        try {
+            const key = `taskProgress_${uid}_${date}`;
+            const stored = localStorage.getItem(key);
+            return stored ? JSON.parse(stored) : {};
+        } catch (_) { return {}; }
+    }
+    // PRODUCCIÓN FUTURA:
+    // const snap = await firebase.database().ref('taskProgress/' + uid + '/' + date).once('value');
+    // return snap.exists() ? snap.val() : {};
+    return {};
+}
+
+/**
+ * Dominio 3: Actualiza únicamente status y/o notes del progreso del Gestor.
+ * Campos prohibidos: uid, setId, taskId, task, detail (protegidos en Firebase Rules)
+ * @param {string} uid
+ * @param {string} date
+ * @param {string} taskId
+ * @param {{ status?: string, notes?: string }} updates
+ */
+async function updateTaskProgress(uid, date, taskId, updates) {
+    const allowed = { status: true, notes: true };
+    const clean = {};
+    for (const [k, v] of Object.entries(updates)) {
+        if (allowed[k]) clean[k] = v;
+    }
+    clean.lastUpdated = Date.now();
+
+    if (TASK_DATA_SOURCE === 'staging') {
+        const key = `taskProgress_${uid}_${date}`;
+        let current = {};
+        try { current = JSON.parse(localStorage.getItem(key) || '{}'); } catch (_) {}
+        current[taskId] = { ...(current[taskId] || { status: 'pending', notes: '' }), ...clean };
+        localStorage.setItem(key, JSON.stringify(current));
+        return;
+    }
+    // PRODUCCIÓN FUTURA:
+    // Escritura directa en Firebase. Las Rules validan que solo status/notes sean modificables
+    // y que /taskAssignments/{uid}/{date} exista (gestor tiene asignación legítima).
+    // await firebase.database().ref('taskProgress/' + uid + '/' + date + '/' + taskId).update(clean);
+}
+
+/**
+ * Composición de las 3 capas: devuelve las tareas del Gestor para HOY
+ * con su estado de progreso actual.
+ * @returns {Promise<{ setId, setLabel, tasks: Array }>|null>}
+ */
+async function getCurrentUserTasks() {
+    if (!currentUser || !currentUser.uid) return null;
+
+    const today = new Date();
+    const dateStr = today.getFullYear() + '-' +
+        String(today.getMonth() + 1).padStart(2, '0') + '-' +
+        String(today.getDate()).padStart(2, '0');
+
+    const assignment = await getCurrentUserTaskAssignment(currentUser.uid, dateStr);
+    if (!assignment) return null;
+
+    const tasks = await getTasksForSet(assignment.setId);
+    const progress = await getCurrentUserTaskProgress(currentUser.uid, dateStr);
+
+    const enriched = tasks.map(t => ({
+        ...t,
+        progress: progress[t.taskId] || { status: 'pending', notes: '' }
+    }));
+
+    return { setId: assignment.setId, setLabel: enriched[0]?.setLabel || assignment.setId, tasks: enriched };
+}
+
+// =============================================================================
+// FUNCIÓN PRINCIPAL DE CARGA DE TAREAS — usa la capa de abstracción
+// Mantiene el mismo contrato visual (renderTree, allTasks, etc.)
+// =============================================================================
+
+// Data source global
 let allTasks = [];
 let currentSelectedTask = null;
 
-// Initialize Excel fetching
 async function loadExcelTasks() {
     const container = document.querySelector('.tree-container');
-    if(container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary);"><i class="bx bx-loader-alt bx-spin"></i> Cargando Tareas...</div>';
-    
+    if (container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary);"><i class="bx bx-loader-alt bx-spin"></i> Cargando Tareas...</div>';
+
     try {
-        const url = encodeURI('Tareas Riesgo/Tareas de Riesgo.xlsx') + '?t=' + new Date().getTime();
-        const response = await fetch(url);
-        if(!response.ok) throw new Error("Error HTTP " + response.status);
-        const arrayBuffer = await response.arrayBuffer();
-        const workbook = XLSX.read(arrayBuffer, {type: 'array'});
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-        
-        // Assign ID to all master tasks in json
-        json.forEach((row, idx) => {
-            row.id = idx;
-        });
-        
-        let processedRows = [];
-        
-        if (currentUser && currentUser.role === 'Gestor') {
-            // Resolve today's real shift from the parsed schedule (globalScheduleRows/globalScheduleBlocks)
-            // This ensures the filter uses the actual shift for today, not a stale value from localStorage
-            let resolvedShift = currentUser.shift || 'Por Asignar';
-            if (globalScheduleRows && globalScheduleBlocks && globalScheduleBlocks.length > 0) {
-                const todayShift = getShiftForDate(globalScheduleRows, globalScheduleBlocks, currentUser.name, new Date());
-                if (todayShift && todayShift !== 'Por Asignar' && todayShift !== 'Descansa') {
-                    resolvedShift = todayShift;
+        // STAGING: usa getCurrentUserTasks() que consume fixtures sintéticos
+        // PRODUCCIÓN FUTURA: misma llamada, diferente implementación interna
+        const result = await getCurrentUserTasks();
+
+        if (!result) {
+            if (container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary); text-align: center;">No hay tareas asignadas para el día de hoy.</div>';
+            return;
+        }
+
+        // Transformar al formato interno esperado por renderTree
+        const tasksBySet = {};
+        allTasks = [];
+
+        const setLabel = result.setLabel;
+        tasksBySet[setLabel] = [];
+
+        // Pre-populate taskStateCache con el progreso almacenado (status → formato esperado por renderTree)
+        // Mapeo: domain status 'pending'/'in_progress'/'done' → UI labels 'Pendiente'/'En Proceso'/'Finalizada'
+        const STATUS_MAP = { pending: 'Pendiente', in_progress: 'En Proceso', done: 'Finalizada' };
+        result.tasks.forEach((t) => {
+            const taskId = t.taskId;
+            if (t.progress && t.progress.status && t.progress.status !== 'pending') {
+                if (!taskStateCache[taskId]) {
+                    taskStateCache[taskId] = {
+                        status: STATUS_MAP[t.progress.status] || 'Pendiente',
+                        observation: t.progress.notes || '',
+                    };
                 }
             }
-            // Load cronograma assignments using the resolved real shift
-            await loadCronogramaAssignments(currentUser.name, resolvedShift);
-            
-            if (gestorCronogramaAssignments && gestorCronogramaAssignments.length > 0) {
-                // Filter the master json rows
-                const filteredMasterRows = json.filter(row => {
-                    const set = row['Set '] || row['Set'] || 'Otros';
-                    const taskName = row['Tarea'];
-                    return gestorCronogramaAssignments.some(assign => 
-                        taskNamesMatch(assign.task, taskName) && setNamesMatch(assign.set, set)
-                    );
-                });
-                
-                // Generate mock tasks for assignments that aren't in the master sheet
-                const generatedMocks = [];
-                let mockId = 10000;
-                gestorCronogramaAssignments.forEach(assign => {
-                    const hasMasterMatch = json.some(row => 
-                        taskNamesMatch(assign.task, row['Tarea']) && setNamesMatch(assign.set, row['Set '] || row['Set'] || 'Otros')
-                    );
-                    
-                    if (!hasMasterMatch) {
-                        const mockRow = {
-                            'Set ': assign.set,
-                            'Tarea': assign.task,
-                            'Detalle de Tarea': `Tarea de control rutinario: ${assign.task}. Realizar las verificaciones correspondientes según los lineamientos de Riesgo.`,
-                            'Horario': 'Durante el turno',
-                            'Día': 'Diario',
-                            'Instrucciones': '1. Realizar la validación de la tarea de acuerdo con el procedimiento estándar.\n2. Registrar cualquier anomalía en los canales oficiales.\n3. Marcar como completada en esta plataforma al finalizar.',
-                            'Documento / Video de Apoyo': '',
-                            id: mockId++
-                        };
-                        generatedMocks.push(mockRow);
-                    }
-                });
-                
-                processedRows = [...filteredMasterRows, ...generatedMocks];
-            } else {
-                processedRows = [];
-            }
-        } else {
-            // Admin/Supervisor or other roles see everything
-            processedRows = json;
-        }
-        
-        // Transform the data, group by Set
-        const tasksBySet = {};
-        allTasks = []; // Clear global allTasks
-        
-        processedRows.forEach((row, index) => {
-            const set = row['Set '] || row['Set'] || 'Otros';
-            const taskName = row['Tarea'];
-            const taskId = row.id !== undefined ? row.id : index;
-            
-            if (!tasksBySet[set]) tasksBySet[set] = [];
-            
-            // Check for duplicates in the visual tree
-            const isDuplicate = tasksBySet[set].some(t => t.name === taskName);
-            
-            if (!isDuplicate) {
-                tasksBySet[set].push({
-                    id: taskId,
-                    name: taskName,
-                    detail: row['Detalle de Tarea'],
-                    time: row['Horario'],
-                    day: row['Día']
-                });
-            }
-            allTasks.push({ ...row, id: taskId });
         });
-        
+
+        result.tasks.forEach((t, index) => {
+            const taskId = t.taskId || String(index);
+            const isDuplicate = tasksBySet[setLabel].some(x => x.name === t.task);
+            if (!isDuplicate) {
+                tasksBySet[setLabel].push({
+                    id: taskId,
+                    name: t.task,
+                    detail: t.detail,
+                    time: t.horario,
+                    day: 'Diario',
+                    // Progreso incluido para que la UI pueda restaurar estado
+                    progress: t.progress,
+                });
+            }
+            allTasks.push({
+                id: taskId,
+                'Set ': setLabel,
+                'Tarea': t.task,
+                'Detalle de Tarea': t.detail,
+                'Horario': t.horario,
+                progress: t.progress,
+            });
+        });
+
         // Populate Set Selector
         const select = document.getElementById('activeSetSelect');
-        if(select) {
+        if (select) {
             select.innerHTML = '<option value="" disabled selected>Selecciona tu SET a trabajar...</option><option value="Todos">Mostrar Todos</option>';
             const setsKeys = Object.keys(tasksBySet).sort();
             setsKeys.forEach(set => {
-                select.innerHTML += `<option value="${set}">${set}</option>`;
+                select.innerHTML += `<option value="${escapeHTML(set)}">${escapeHTML(set)}</option>`;
             });
-            
+
             // Clone select to remove old event listeners
             const newSelect = select.cloneNode(true);
             select.parentNode.replaceChild(newSelect, select);
-            
+
             newSelect.addEventListener('change', (e) => {
                 const val = e.target.value;
-                if(val === 'Todos') {
+                if (val === 'Todos') {
                     renderTree(tasksBySet);
                 } else {
                     const filtered = {};
@@ -1258,19 +1378,15 @@ async function loadExcelTasks() {
                 filtered[setsKeys[0]] = tasksBySet[setsKeys[0]];
                 renderTree(filtered);
             } else if (setsKeys.length === 0) {
-                const container = document.querySelector('.tree-container');
-                if(container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary); text-align: center;">No hay tareas asignadas en tu cronograma para el día de hoy.</div>';
+                if (container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary); text-align: center;">No hay tareas asignadas en tu cronograma para el día de hoy.</div>';
             } else {
-                // No renderizar todos por defecto, esperar selección
-                const container = document.querySelector('.tree-container');
-                if(container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary); text-align: center;">Selecciona un SET en el menú desplegable para ver las tareas.</div>';
+                if (container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary); text-align: center;">Selecciona un SET en el menú desplegable para ver las tareas.</div>';
             }
         }
-        
-    } catch(err) {
-        console.warn("Tareas de riesgo no disponibles en entorno de pruebas:", err.message || err);
-        const container = document.querySelector('.tree-container');
-        if(container) container.innerHTML = `<div style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-shield-quarter" style="font-size: 28px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i><strong>Información interna temporalmente no disponible en este entorno</strong><br><small style="color: var(--text-muted); display: inline-block; margin-top: 4px;">La matriz operativa de tareas está protegida en este entorno de demostración (clasificación confidencial interna).</small></div>`;
+
+    } catch (err) {
+        console.warn('Tareas de riesgo no disponibles en entorno de pruebas:', err.message || err);
+        if (container) container.innerHTML = `<div style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-shield-quarter" style="font-size: 28px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i><strong>Información interna temporalmente no disponible en este entorno</strong><br><small style="color: var(--text-muted); display: inline-block; margin-top: 4px;">La matriz operativa de tareas está protegida en este entorno de demostración (clasificación confidencial interna).</small></div>`;
     }
 }
 

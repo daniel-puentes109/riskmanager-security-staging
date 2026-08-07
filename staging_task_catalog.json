@@ -1,0 +1,29 @@
+{
+  "set-a-manana": {
+    "setLabel": "Set A Mañana",
+    "horario": "8am - 4pm",
+    "tasks": {
+      "revision-operaciones-demo": {
+        "taskId": "revision-operaciones-demo",
+        "task": "Revisión de Operaciones Demo",
+        "detail": "Verificar las operaciones sintéticas en el dashboard."
+      },
+      "analisis-riesgo-sintetico": {
+        "taskId": "analisis-riesgo-sintetico",
+        "task": "Análisis de Riesgo Sintético",
+        "detail": "Completar la matriz de prueba."
+      }
+    }
+  },
+  "set-b-tarde": {
+    "setLabel": "Set B Tarde",
+    "horario": "3pm - 11pm",
+    "tasks": {
+      "monitoreo-alertas-demo": {
+        "taskId": "monitoreo-alertas-demo",
+        "task": "Monitoreo de Alertas Demo",
+        "detail": "Revisar el canal de alertas de prueba."
+      }
+    }
+  }
+}
