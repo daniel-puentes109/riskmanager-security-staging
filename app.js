@@ -1045,56 +1045,18 @@ function getShiftForDate(rows, allScheduleBlocks, gestorName, date) {
     return 'Por Asignar';
 }
 
-// Catálogo de Documentos Privados alojados en el repositorio privado
-const PRIVATE_PDF_DOCS = [
-    "Guia Jira EGT - Proveedor de Casino.pdf",
-    "Instructivo de revisión de apuestas casino.pdf",
-    "Instructivo de validación de GGR Casino.pdf",
-    "Política Procedimiento De Aprobación De Retiros.pdf",
-    "Procedimiento Identificación de jineteo.pdf",
-    "Proceso de Eliminación de Cuentas - Implementaciones.pdf",
-    "VALIDACIÓN DE ABUSO DE BONOS EN CAMPAÑAS DE CRM.pdf"
-];
-
-const PENDING_VIDEO_DOCS = [
-    "Revisión de Eventos Deportivos.mp4",
-    "Revisión de Eventos.mp4",
-    "Validación SEON.mp4"
-];
-
-const GITHUB_PRIVATE_DOCS_BASE = "https://github.com/RiesgoVirtualsoft/riskmanager-internal-docs/blob/main/Procedimientos/";
-
-function isPrivatePdf(fileName) {
-    if (!fileName) return false;
-    return PRIVATE_PDF_DOCS.includes(fileName);
-}
-
-function isPrivateVideo(fileName) {
-    if (!fileName) return false;
-    return PENDING_VIDEO_DOCS.includes(fileName);
-}
-
-function isPrivateDoc(fileName) {
-    return isPrivatePdf(fileName) || isPrivateVideo(fileName);
-}
-
-window.handlePrivateDocAccess = function(fileName) {
-    const cleanName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "Recurso multimedia";
-    alert(`[ACCESO RESTRINGIDO - RECURSO MULTIMEDIA]\n\nRecurso: "${cleanName}"\n\nEste recurso audiovisual corresponde a una capacitación interna del área de Riesgo.\nActualmente no se encuentra un archivo físico disponible en el repositorio público.\n\nEstado: PENDING_PRIVATE_DOCUMENT_MIGRATION.`);
+// Mapeo de URLs para documentos (especialmente videos pesados alojados en Google Drive)
+const documentUrls = {
+    "Revisión de Eventos Deportivos.mp4": "https://drive.google.com/file/d/1UqccsnUwTG6tgPcDYdUeLnf9XqvGzSoc/view?usp=sharing",
+    "Revisión de Eventos.mp4": "https://drive.google.com/file/d/1SB9ePi1EOJU05hzOsxOyl7BeNvCN1hOh/view?usp=sharing",
+    "Validación SEON.mp4": "https://drive.google.com/file/d/1JFf5basGD0gmrAVIy5AlMK1DBHYgE6JC/view?usp=sharing"
 };
 
 function getDocUrl(fileName) {
-    if (!fileName) return "#";
-    if (isPrivatePdf(fileName)) {
-        return GITHUB_PRIVATE_DOCS_BASE + encodeURIComponent(fileName);
+    if (documentUrls[fileName]) {
+        return documentUrls[fileName];
     }
-    if (isPrivateVideo(fileName)) {
-        return "#";
-    }
-    if (fileName === "Manual_Usuario_Penka.html") {
-        return "Procesos/Manual_Usuario_Penka.html";
-    }
-    return "Procesos/" + encodeURI(fileName);
+    return "Procesos/" + fileName;
 }
 
 let taskStateCache = {};
@@ -1122,311 +1084,128 @@ function updateClock() {
 setInterval(updateClock, 1000);
 updateClock(); // Initial call
 
-// =============================================================================
-// CAPA DE ABSTRACCIÓN DE TAREAS — 3 DOMINIOS SEPARADOS
-// =============================================================================
-// Dominio 1 (taskCatalog):    Catálogo de tareas por SET. Sin PII.
-// Dominio 2 (taskAssignments): Asignación uid→fecha→setId. Generada por importador.
-// Dominio 3 (taskProgress):   Estado del Gestor. Solo status/notes.
-//
-// STAGING: consume staging_task_catalog.json + staging_task_assignments.json (datos sintéticos)
-// PRODUCCIÓN FUTURA: misma interfaz, fuente = Firebase /taskAssignments/{auth.uid}/{date}
-//
-// La autorización definitiva usa auth.uid, no currentUser.name.
-// =============================================================================
-
-const TASK_DATA_SOURCE = 'staging'; // 'staging' | 'firebase' (futuro)
-const STAGING_CATALOG_URL   = 'staging_task_catalog.json';
-const STAGING_ASSIGNMENTS_URL = 'staging_task_assignments.json';
-const STAGING_SCHEDULE_URL = 'staging_schedule_assignments.json';
-const STAGING_TELEWORK_URL = 'staging_telework_assignments.json';
-
-// Cache interno (evita múltiples fetches)
-let _catalogCache = null;
-let _assignmentsCache = null;
-let _scheduleCache = null;
-let _teleworkCache = null;
-let _progressCache = {};   // { uid_date_taskId: { status, notes, lastUpdated } }
-
-/**
- * Dominio 1: Devuelve las tareas de un SET del catálogo.
- * En STAGING: lee staging_task_catalog.json
- * En producción futura: leerá /taskCatalog/{setId} en Firebase
- * @param {string} setId - ID normalizado del SET (ej. "set-1-manana")
- * @returns {Promise<{taskId, task, detail, horario}[]>}
- */
-async function getTasksForSet(setId) {
-    if (TASK_DATA_SOURCE === 'staging') {
-        if (!_catalogCache) {
-            const res = await fetch(STAGING_CATALOG_URL + '?t=' + Date.now());
-            if (!res.ok) throw new Error('staging_task_catalog.json no disponible');
-            _catalogCache = await res.json();
-        }
-        const setData = _catalogCache[setId];
-        if (!setData || !setData.tasks) return [];
-        return Object.values(setData.tasks).map(t => ({
-            taskId:  t.taskId,
-            task:    t.task,
-            detail:  t.detail,
-            horario: t.horario || setData.horario || '',
-            setLabel: setData.setLabel || setId,
-        }));
-    }
-    // PRODUCCIÓN FUTURA:
-    // const snap = await firebase.database().ref('taskCatalog/' + setId + '/tasks').once('value');
-    // return snap.exists() ? Object.values(snap.val()) : [];
-    return [];
-}
-
-/**
- * Dominio 2: Devuelve la asignación de un Gestor para una fecha específica.
- * Un Gestor puede tener como máximo 1 SET por fecha específica (cardinalidad 1:1 por fecha).
- * En STAGING: lee staging_task_assignments.json
- * En producción futura: leerá /taskAssignments/{uid}/{date} en Firebase
- * @param {string} uid  - Firebase auth.uid del Gestor
- * @param {string} date - Fecha en formato YYYY-MM-DD
- * @returns {Promise<{uid, date, setId, shiftType}|null>}
- */
-async function getCurrentUserTaskAssignment(uid, date) {
-    if (TASK_DATA_SOURCE === 'staging') {
-        if (!_assignmentsCache) {
-            const res = await fetch(STAGING_ASSIGNMENTS_URL + '?t=' + Date.now());
-            if (!res.ok) return null;
-            _assignmentsCache = await res.json();
-        }
-        let found = _assignmentsCache.find(a => a.uid === uid && a.date === date);
-        if (!found) {
-            found = _assignmentsCache.find(a => a.uid === '*' && a.date === '*');
-        }
-        if (found && !found.setId) return null; // Negative test support
-        return found || null;
-    }
-    // PRODUCCIÓN FUTURA:
-    // const snap = await firebase.database().ref('taskAssignments/' + uid + '/' + date).once('value');
-    // return snap.exists() ? snap.val() : null;
-    return null;
-}
-
-/**
- * Dominio 3: Lee el progreso del Gestor para una fecha.
- * Escrito únicamente por el Gestor en sesión. Solo campos: status, notes, lastUpdated.
- * En STAGING: usa localStorage como persistencia efímera
- * En producción futura: leerá /taskProgress/{uid}/{date} en Firebase
- * @param {string} uid  - Firebase auth.uid del Gestor
- * @param {string} date - Fecha en formato YYYY-MM-DD
- * @returns {Promise<{[taskId]: {status, notes, lastUpdated}}>}
- */
-async function getCurrentUserTaskProgress(uid, date) {
-    if (TASK_DATA_SOURCE === 'staging') {
-        try {
-            const key = `taskProgress_${uid}_${date}`;
-            const stored = localStorage.getItem(key);
-            return stored ? JSON.parse(stored) : {};
-        } catch (_) { return {}; }
-    }
-    // PRODUCCIÓN FUTURA:
-    // const snap = await firebase.database().ref('taskProgress/' + uid + '/' + date).once('value');
-    // return snap.exists() ? snap.val() : {};
-    return {};
-}
-
-/**
- * Dominio 3: Actualiza únicamente status y/o notes del progreso del Gestor.
- * Campos prohibidos: uid, setId, taskId, task, detail (protegidos en Firebase Rules)
- * @param {string} uid
- * @param {string} date
- * @param {string} taskId
- * @param {{ status?: string, notes?: string }} updates
- */
-async function updateTaskProgress(uid, date, taskId, updates) {
-    const allowed = { status: true, notes: true };
-    const clean = {};
-    for (const [k, v] of Object.entries(updates)) {
-        if (allowed[k]) clean[k] = v;
-    }
-    clean.lastUpdated = Date.now();
-
-    if (TASK_DATA_SOURCE === 'staging') {
-        const key = `taskProgress_${uid}_${date}`;
-        let current = {};
-        try { current = JSON.parse(localStorage.getItem(key) || '{}'); } catch (_) {}
-        current[taskId] = { ...(current[taskId] || { status: 'pending', notes: '' }), ...clean };
-        localStorage.setItem(key, JSON.stringify(current));
-        return;
-    }
-    // PRODUCCIÓN FUTURA:
-    // Escritura directa en Firebase. Las Rules validan que solo status/notes sean modificables
-    // y que /taskAssignments/{uid}/{date} exista (gestor tiene asignación legítima).
-    // await firebase.database().ref('taskProgress/' + uid + '/' + date + '/' + taskId).update(clean);
-}
-
-/**
- * Composición de las 3 capas: devuelve las tareas del Gestor para HOY
- * con su estado de progreso actual.
- * @returns {Promise<{ setId, setLabel, tasks: Array }>|null>}
- */
-async function getCurrentUserSchedule(uid) {
-    if (TASK_DATA_SOURCE === 'staging') {
-        if (!_scheduleCache) {
-            try {
-                const res = await fetch(STAGING_SCHEDULE_URL + '?t=' + Date.now());
-                if (!res.ok) return null;
-                _scheduleCache = await res.json();
-            } catch(e) { return null; }
-        }
-        let filtered = _scheduleCache.filter(a => a.uid === uid);
-        if (filtered.length === 0) {
-            filtered = _scheduleCache.filter(a => a.uid === '*');
-        }
-        return filtered; // array of week schedules
-    }
-    return null;
-}
-
-async function getCurrentUserTelework(uid) {
-    if (TASK_DATA_SOURCE === 'staging') {
-        if (!_teleworkCache) {
-            try {
-                const res = await fetch(STAGING_TELEWORK_URL + '?t=' + Date.now());
-                if (!res.ok) return null;
-                _teleworkCache = await res.json();
-            } catch(e) { return null; }
-        }
-        let filtered = _teleworkCache.filter(a => a.uid === uid);
-        if (filtered.length === 0) {
-            filtered = _teleworkCache.filter(a => a.uid === '*');
-        }
-        return filtered; // array of week telework
-    }
-    return null;
-}
-
-async function getCurrentUserTasks() {
-    if (!currentUser) {
-        console.log("TASK_DEBUG currentUser=MISSING");
-        return null;
-    }
-    const uid = currentUser.uid || "*";
-    if (!currentUser.uid) {
-        console.log("TASK_DEBUG uid=MISSING (using wildcard *)");
-    }
-
-    const today = new Date();
-    const dateStr = today.getFullYear() + '-' +
-        String(today.getMonth() + 1).padStart(2, '0') + '-' +
-        String(today.getDate()).padStart(2, '0');
-
-    console.log(`TASK_DEBUG uid=${uid}`);
-    console.log(`TASK_DEBUG date=${dateStr}`);
-
-    const assignment = await getCurrentUserTaskAssignment(uid, dateStr);
-    console.log(`TASK_DEBUG assignment_found=${!!assignment}`);
-
-    if (!assignment) return null;
-    
-    console.log(`TASK_DEBUG setId=${assignment.setId}`);
-
-    const tasks = await getTasksForSet(assignment.setId);
-    console.log(`TASK_DEBUG catalog_set_found=${tasks.length > 0}`);
-    console.log(`TASK_DEBUG task_count=${tasks.length}`);
-
-    if (tasks.length === 0) return { setId: assignment.setId, setLabel: assignment.setId, tasks: [] };
-
-    const progress = await getCurrentUserTaskProgress(uid, dateStr);
-
-    const enriched = tasks.map(t => ({
-        ...t,
-        progress: progress[t.taskId] || { status: 'pending', notes: '' }
-    }));
-
-    return { setId: assignment.setId, setLabel: enriched[0]?.setLabel || assignment.setId, tasks: enriched };
-}
-
-// =============================================================================
-// FUNCIÓN PRINCIPAL DE CARGA DE TAREAS — usa la capa de abstracción
-// Mantiene el mismo contrato visual (renderTree, allTasks, etc.)
-// =============================================================================
-
-// Data source global
+// Data source real
 let allTasks = [];
 let currentSelectedTask = null;
 
+// Initialize Excel fetching
 async function loadExcelTasks() {
     const container = document.querySelector('.tree-container');
-    if (container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary);"><i class="bx bx-loader-alt bx-spin"></i> Cargando Tareas...</div>';
-
+    if(container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary);"><i class="bx bx-loader-alt bx-spin"></i> Cargando Tareas...</div>';
+    
     try {
-        // STAGING: usa getCurrentUserTasks() que consume fixtures sintéticos
-        // PRODUCCIÓN FUTURA: misma llamada, diferente implementación interna
-        const result = await getCurrentUserTasks();
-
-        if (!result) {
-            if (container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary); text-align: center;">No hay tareas asignadas para el día de hoy.</div>';
-            return;
-        }
-
-        // Transformar al formato interno esperado por renderTree
-        const tasksBySet = {};
-        allTasks = [];
-
-        const setLabel = result.setLabel;
-        tasksBySet[setLabel] = [];
-
-        // Pre-populate taskStateCache con el progreso almacenado (status → formato esperado por renderTree)
-        // Mapeo: domain status 'pending'/'in_progress'/'done' → UI labels 'Pendiente'/'En Proceso'/'Finalizada'
-        const STATUS_MAP = { pending: 'Pendiente', in_progress: 'En Proceso', done: 'Finalizada' };
-        result.tasks.forEach((t) => {
-            const taskId = t.taskId;
-            if (t.progress && t.progress.status && t.progress.status !== 'pending') {
-                if (!taskStateCache[taskId]) {
-                    taskStateCache[taskId] = {
-                        status: STATUS_MAP[t.progress.status] || 'Pendiente',
-                        observation: t.progress.notes || '',
-                    };
+        const url = encodeURI('Tareas Riesgo/Tareas de Riesgo.xlsx') + '?t=' + new Date().getTime();
+        const response = await fetch(url);
+        if(!response.ok) throw new Error("Error HTTP " + response.status);
+        const arrayBuffer = await response.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, {type: 'array'});
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+        
+        // Assign ID to all master tasks in json
+        json.forEach((row, idx) => {
+            row.id = idx;
+        });
+        
+        let processedRows = [];
+        
+        if (currentUser && currentUser.role === 'Gestor') {
+            // Resolve today's real shift from the parsed schedule (globalScheduleRows/globalScheduleBlocks)
+            // This ensures the filter uses the actual shift for today, not a stale value from localStorage
+            let resolvedShift = currentUser.shift || 'Por Asignar';
+            if (globalScheduleRows && globalScheduleBlocks && globalScheduleBlocks.length > 0) {
+                const todayShift = getShiftForDate(globalScheduleRows, globalScheduleBlocks, currentUser.name, new Date());
+                if (todayShift && todayShift !== 'Por Asignar' && todayShift !== 'Descansa') {
+                    resolvedShift = todayShift;
                 }
             }
-        });
-
-        result.tasks.forEach((t, index) => {
-            const taskId = t.taskId || String(index);
-            const isDuplicate = tasksBySet[setLabel].some(x => x.name === t.task);
+            // Load cronograma assignments using the resolved real shift
+            await loadCronogramaAssignments(currentUser.name, resolvedShift);
+            
+            if (gestorCronogramaAssignments && gestorCronogramaAssignments.length > 0) {
+                // Filter the master json rows
+                const filteredMasterRows = json.filter(row => {
+                    const set = row['Set '] || row['Set'] || 'Otros';
+                    const taskName = row['Tarea'];
+                    return gestorCronogramaAssignments.some(assign => 
+                        taskNamesMatch(assign.task, taskName) && setNamesMatch(assign.set, set)
+                    );
+                });
+                
+                // Generate mock tasks for assignments that aren't in the master sheet
+                const generatedMocks = [];
+                let mockId = 10000;
+                gestorCronogramaAssignments.forEach(assign => {
+                    const hasMasterMatch = json.some(row => 
+                        taskNamesMatch(assign.task, row['Tarea']) && setNamesMatch(assign.set, row['Set '] || row['Set'] || 'Otros')
+                    );
+                    
+                    if (!hasMasterMatch) {
+                        const mockRow = {
+                            'Set ': assign.set,
+                            'Tarea': assign.task,
+                            'Detalle de Tarea': `Tarea de control rutinario: ${assign.task}. Realizar las verificaciones correspondientes según los lineamientos de Riesgo.`,
+                            'Horario': 'Durante el turno',
+                            'Día': 'Diario',
+                            'Instrucciones': '1. Realizar la validación de la tarea de acuerdo con el procedimiento estándar.\n2. Registrar cualquier anomalía en los canales oficiales.\n3. Marcar como completada en esta plataforma al finalizar.',
+                            'Documento / Video de Apoyo': '',
+                            id: mockId++
+                        };
+                        generatedMocks.push(mockRow);
+                    }
+                });
+                
+                processedRows = [...filteredMasterRows, ...generatedMocks];
+            } else {
+                processedRows = [];
+            }
+        } else {
+            // Admin/Supervisor or other roles see everything
+            processedRows = json;
+        }
+        
+        // Transform the data, group by Set
+        const tasksBySet = {};
+        allTasks = []; // Clear global allTasks
+        
+        processedRows.forEach((row, index) => {
+            const set = row['Set '] || row['Set'] || 'Otros';
+            const taskName = row['Tarea'];
+            const taskId = row.id !== undefined ? row.id : index;
+            
+            if (!tasksBySet[set]) tasksBySet[set] = [];
+            
+            // Check for duplicates in the visual tree
+            const isDuplicate = tasksBySet[set].some(t => t.name === taskName);
+            
             if (!isDuplicate) {
-                tasksBySet[setLabel].push({
+                tasksBySet[set].push({
                     id: taskId,
-                    name: t.task,
-                    detail: t.detail,
-                    time: t.horario,
-                    day: 'Diario',
-                    // Progreso incluido para que la UI pueda restaurar estado
-                    progress: t.progress,
+                    name: taskName,
+                    detail: row['Detalle de Tarea'],
+                    time: row['Horario'],
+                    day: row['Día']
                 });
             }
-            allTasks.push({
-                id: taskId,
-                'Set ': setLabel,
-                'Tarea': t.task,
-                'Detalle de Tarea': t.detail,
-                'Horario': t.horario,
-                progress: t.progress,
-            });
+            allTasks.push({ ...row, id: taskId });
         });
-
+        
         // Populate Set Selector
         const select = document.getElementById('activeSetSelect');
-        if (select) {
+        if(select) {
             select.innerHTML = '<option value="" disabled selected>Selecciona tu SET a trabajar...</option><option value="Todos">Mostrar Todos</option>';
             const setsKeys = Object.keys(tasksBySet).sort();
             setsKeys.forEach(set => {
-                select.innerHTML += `<option value="${escapeHTML(set)}">${escapeHTML(set)}</option>`;
+                select.innerHTML += `<option value="${set}">${set}</option>`;
             });
-
+            
             // Clone select to remove old event listeners
             const newSelect = select.cloneNode(true);
             select.parentNode.replaceChild(newSelect, select);
-
+            
             newSelect.addEventListener('change', (e) => {
                 const val = e.target.value;
-                if (val === 'Todos') {
+                if(val === 'Todos') {
                     renderTree(tasksBySet);
                 } else {
                     const filtered = {};
@@ -1441,170 +1220,359 @@ async function loadExcelTasks() {
                 filtered[setsKeys[0]] = tasksBySet[setsKeys[0]];
                 renderTree(filtered);
             } else if (setsKeys.length === 0) {
-                if (container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary); text-align: center;">No hay tareas asignadas en tu cronograma para el día de hoy.</div>';
+                const container = document.querySelector('.tree-container');
+                if(container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary); text-align: center;">No hay tareas asignadas en tu cronograma para el día de hoy.</div>';
             } else {
-                if (container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary); text-align: center;">Selecciona un SET en el menú desplegable para ver las tareas.</div>';
+                // No renderizar todos por defecto, esperar selección
+                const container = document.querySelector('.tree-container');
+                if(container) container.innerHTML = '<div style="padding: 20px; color: var(--text-secondary); text-align: center;">Selecciona un SET en el menú desplegable para ver las tareas.</div>';
             }
         }
-
-    } catch (err) {
-        console.warn('Tareas de riesgo no disponibles en entorno de pruebas:', err.message || err);
-        if (container) container.innerHTML = `<div style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-shield-quarter" style="font-size: 28px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i><strong>Información interna temporalmente no disponible en este entorno</strong><br><small style="color: var(--text-muted); display: inline-block; margin-top: 4px;">La matriz operativa de tareas está protegida en este entorno de demostración (clasificación confidencial interna).</small></div>`;
+        
+    } catch(err) {
+        console.error("Error loading tasks:", err);
+        const container = document.querySelector('.tree-container');
+        if(container) container.innerHTML = `<div style="padding: 20px; color: var(--danger);"><i class="bx bx-error-circle"></i> Error cargando tareas: ${escapeHTML(err.message)}</div>`;
     }
 }
 
 // Initializar parseo del Horario Personal
 async function loadSchedule() {
-    const tableHead = document.getElementById('scheduleTableHead');
-    const tableBody = document.getElementById('scheduleTableBody');
-    const weekSelector = document.getElementById('weekSelector');
-
-    if (tableBody) tableBody.innerHTML = `<tr><td colspan="8" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-loader-alt bx-spin"></i> Cargando Horario...</td></tr>`;
-
     try {
-        if (!currentUser) return;
-        const uid = currentUser.uid || "*";
-        const assignments = await getCurrentUserSchedule(uid);
+        const url = encodeURI('Horario/Horario 2026.xlsx') + '?t=' + Date.now();
+        const response = await fetch(url);
+        if(!response.ok) throw new Error("Fallo red");
+        const arrayBuffer = await response.arrayBuffer();
+        const workbook = XLSX.read(arrayBuffer, {type: 'array'});
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
         
-        if (!assignments || assignments.length === 0) {
-            if (weekSelector) weekSelector.innerHTML = '<option>Sin información disponible</option>';
-            if (tableBody) tableBody.innerHTML = `<tr><td colspan="8" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-info-circle"></i> No hay horario asignado</td></tr>`;
-            return;
-        }
-
-        if (weekSelector) {
-            weekSelector.innerHTML = '';
-            assignments.forEach((a, idx) => {
-                weekSelector.innerHTML += `<option value="${idx}">${escapeHTML(a.weekLabel)}</option>`;
-            });
-            weekSelector.value = assignments.length - 1; // Select the last one by default
+        function formatExcelDate(serial) {
+            if(!serial) return "";
+            const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
             
-            // Remove old listeners to prevent duplicates
-            const newSelector = weekSelector.cloneNode(true);
-            weekSelector.parentNode.replaceChild(newSelector, weekSelector);
-            
-            newSelector.addEventListener('change', (e) => {
-                renderSchedule(assignments[e.target.value]);
-            });
-            renderSchedule(assignments[newSelector.value]);
-        } else {
-            renderSchedule(assignments[assignments.length - 1]);
-        }
-
-        function renderSchedule(assignment) {
-            if (!assignment || !assignment.days) return;
-            
-            if (tableHead) {
-                tableHead.innerHTML = `
-                    <tr style="border-bottom: 1px solid var(--glass-border);">
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: left; position: sticky; left: 0; background: var(--bg-panel); z-index: 2;">GESTOR</th>
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Lunes</th>
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Martes</th>
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Miércoles</th>
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Jueves</th>
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Viernes</th>
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Sábado</th>
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Domingo</th>
-                    </tr>
-                `;
+            // Si ya es un string que parece fecha (ej: "2026-06-08" o "2026-06-08T00:00...")
+            if (typeof serial === 'string' && (serial.includes('-') || serial.includes('/'))) {
+                const d = new Date(serial);
+                if (!isNaN(d.getTime())) {
+                    return `${d.getUTCDate()} ${monthNames[d.getUTCMonth()]}`;
+                }
             }
             
-            if (tableBody) {
-                const gestorName = currentUser.name || "Gestor";
-                const d = assignment.days;
-                let trHTML = `<tr class="hover-highlight" style="border-bottom: 1px solid var(--glass-border); background: rgba(59,130,246,0.1);">`;
-                trHTML += `<td style="padding: 12px; font-weight: 600; text-align: left; color: var(--accent-primary); position: sticky; left: 0; background: var(--bg-dark); z-index: 1;">${gestorName}</td>`;
+            // Si es un número (serial de Excel)
+            if (!isNaN(serial)) {
+                const epochUTC = Date.UTC(1899, 11, 30);
+                const d = new Date(epochUTC + parseFloat(serial) * 86400000);
+                return `${d.getUTCDate()} ${monthNames[d.getUTCMonth()]}`;
+            }
+            
+            return "";
+        }
+        
+        let allScheduleBlocks = [];
+        if (rows && rows.length > 2) {
+            for(let rIdx = 0; rIdx < rows.length; rIdx++) {
+                const testRow = rows[rIdx];
+                if (!testRow || testRow.length < 2) continue;
                 
-                const daysMap = [d.mon, d.tue, d.wed, d.thu, d.fri, d.sat, d.sun];
-                daysMap.forEach(shift => {
-                    let badgeClass = 'pending';
-                    const sLower = (shift || '').toLowerCase();
-                    if(/\d\s*(am|pm)/i.test(shift)) badgeClass = 'in-progress';
-                    else if(sLower.includes('vacacion')) badgeClass = 'vacaciones-badge';
-                    else if(sLower.includes('descansa')) badgeClass = 'descanso-badge';
-                    else if(sLower.includes('familia')) badgeClass = 'familia-badge';
-                    
-                    trHTML += `<td style="padding: 12px; text-align: center; white-space: nowrap;"><span class="badge ${badgeClass}">${shift || '-'}</span></td>`;
+                if (formatExcelDate(testRow[1]) !== "") {
+                    const nextR = rows[rIdx+1];
+                    if (nextR && nextR.length > 1 && (nextR[1] === 'Lunes' || nextR[1] === 'Martes')) {
+                        // Encontramos un bloque, vamos a ver la fecha inicial y final
+                        let firstDate = formatExcelDate(testRow[1]);
+                        let lastDate = firstDate;
+                        for(let c = 1; c < testRow.length; c++) {
+                            if(formatExcelDate(testRow[c])) lastDate = formatExcelDate(testRow[c]);
+                        }
+                        
+                        allScheduleBlocks.push({
+                            startRow: rIdx,
+                            label: `Semana del ${firstDate} al ${lastDate}`
+                        });
+                        rIdx++; // Saltar la fila de días
+                    }
+                }
+            }
+        }
+
+        globalScheduleRows = rows;
+        globalScheduleBlocks = allScheduleBlocks;
+        
+        if (allScheduleBlocks.length === 0) return; // No hay datos válidos
+
+        const tableHead = document.getElementById('scheduleTableHead');
+        const tableBody = document.getElementById('scheduleTableBody');
+        
+        if(tableHead && tableBody && rows.length > 2) {
+            
+            const weekSelector = document.getElementById('weekSelector');
+            
+            // Encontrar el bloque correspondiente a hoy
+            let defaultBlockRow = null;
+            const today = new Date();
+            for (let block of allScheduleBlocks) {
+                const dateRow = rows[block.startRow];
+                for (let c = 1; c < dateRow.length; c++) {
+                    const serial = dateRow[c];
+                    if (serial) {
+                        let cellDate = null;
+                        if (!isNaN(serial)) {
+                            cellDate = excelToJSDate(serial);
+                        } else if (typeof serial === 'string' && (serial.includes('-') || serial.includes('/'))) {
+                            const parsed = new Date(serial);
+                            if (!isNaN(parsed.getTime())) {
+                                cellDate = parsed;
+                            }
+                        }
+                        
+                        if (cellDate && isSameDate(cellDate, today)) {
+                            defaultBlockRow = block.startRow;
+                            break;
+                        }
+                    }
+                }
+                if (defaultBlockRow !== null) break;
+            }
+            
+            if (defaultBlockRow === null) {
+                defaultBlockRow = allScheduleBlocks[allScheduleBlocks.length - 1].startRow;
+            }
+            
+            const scheduleGestorFilter = document.getElementById('scheduleGestorFilter');
+            let selectedGestor = '';
+
+            // Extraer lista única de gestores de la hoja de cálculo
+            const allGestoresSet = new Set();
+            allScheduleBlocks.forEach(block => {
+                for (let rIdx = block.startRow + 2; rIdx < rows.length; rIdx++) {
+                    const row = rows[rIdx];
+                    if (!row || !row[0] || String(row[0]).trim() === '' || String(row[0]).trim().toUpperCase() === 'GESTOR') break;
+                    allGestoresSet.add(String(row[0]).trim());
+                }
+            });
+            const sortedGestores = Array.from(allGestoresSet).sort((a, b) => a.localeCompare(b));
+
+            setupCustomMultiSelect('scheduleGestorMultiSelect', sortedGestores, (selectedList) => {
+                renderScheduleBlock(parseInt(weekSelector ? weekSelector.value : defaultBlockRow));
+            });
+
+            if (weekSelector) {
+                weekSelector.innerHTML = '';
+                allScheduleBlocks.forEach(block => {
+                    weekSelector.innerHTML += `<option value="${escapeHTML(String(block.startRow))}">${escapeHTML(block.label)}</option>`;
                 });
                 
-                trHTML += '</tr>';
-                tableBody.innerHTML = trHTML;
+                weekSelector.value = defaultBlockRow;
+                
+                weekSelector.addEventListener('change', (e) => {
+                    renderScheduleBlock(parseInt(e.target.value));
+                });
+            }
+            
+            // Renderizar el bloque inicial
+            renderScheduleBlock(defaultBlockRow);
+            
+            function renderScheduleBlock(blockStartRow) {
+                const dateRow = rows[blockStartRow];
+                const dayRow = rows[blockStartRow + 1];
+                const selectedList = getSelectedMultiSelectValues('scheduleGestorMultiSelect');
+                
+                let numCols = 0;
+                for(let i=1; i<dateRow.length; i++) {
+                    if(formatExcelDate(dateRow[i])) numCols = i;
+                }
+                if(numCols === 0) numCols = 7; // fallback
+                
+                let headHTML = '<tr style="border-bottom: 1px solid var(--glass-border);">';
+                headHTML += `<th style="padding: 12px; color: var(--accent-primary); text-align: left; position: sticky; left: 0; background: var(--bg-panel); z-index: 2;">GESTOR <i class='bx bx-refresh' style='cursor:pointer; margin-left:5px;' onclick='loadSchedule()' title='Refrescar Horario'></i></th>`;
+                for(let i = 1; i <= numCols; i++) {
+                    const dayName = dayRow[i] || `Día ${i}`;
+                    const dateParsed = formatExcelDate(dateRow[i]);
+                    const subText = dateParsed ? `<br><span style="font-size: 11px; font-weight: normal; color: var(--text-secondary);">${dateParsed}</span>` : '';
+                    headHTML += `<th style="padding: 12px; color: var(--accent-primary); text-align: center;">${dayName}${subText}</th>`;
+                }
+                headHTML += '</tr>';
+                tableHead.innerHTML = headHTML;
+                
+                tableBody.innerHTML = '';
+                for(let rowIndex = blockStartRow + 2; rowIndex < rows.length; rowIndex++) {
+                    const r = rows[rowIndex];
+                    if (!r || !r[0] || String(r[0]).trim() === '' || String(r[0]).trim().toUpperCase() === 'GESTOR') break;
+                    
+                    const gestorName = String(r[0]).trim();
+                    if (selectedList.length > 0 && !selectedList.some(sel => normalizeName(gestorName) === normalizeName(sel))) {
+                        continue;
+                    }
+
+                    let isCurrentUser = (currentUser && namesMatch(gestorName, currentUser.name));
+                    
+                    if (currentUser && currentUser.role === 'Gestor' && !isCurrentUser) continue;
+
+                    let bgClass = isCurrentUser ? 'rgba(59,130,246,0.1)' : 'transparent';
+                    
+                    let trHTML = `<tr class="hover-highlight" style="border-bottom: 1px solid var(--glass-border); background: ${bgClass};">`;
+                    trHTML += `<td style="padding: 12px; font-weight: 600; text-align: left; color: ${isCurrentUser ? 'var(--accent-primary)' : 'var(--text-primary)'}; position: sticky; left: 0; background: ${isCurrentUser ? 'var(--bg-dark)' : 'var(--bg-panel)'}; z-index: 1;">${gestorName}</td>`;
+                    
+                    // Encontrar el turno para mostrar en el badge principal (corresponde a hoy)
+                    let badgeShift = getShiftForDate(rows, allScheduleBlocks, gestorName, new Date());
+                    
+                    for(let i = 1; i <= numCols; i++) {
+                        const shift = r[i] || 'Descansa';
+                        
+                        let badgeClass = 'pending';
+                        const sLower = normalizeName(shift);
+                        if(/\d\s*(am|pm)/i.test(shift)) badgeClass = 'in-progress';
+                        else if(sLower.includes('vacacion')) badgeClass = 'vacaciones-badge';
+                        else if(sLower.includes('descansa')) badgeClass = 'descanso-badge';
+                        else if(sLower.includes('familia')) badgeClass = 'familia-badge';
+                        
+                        trHTML += `<td style="padding: 12px; text-align: center; white-space: nowrap;"><span class="badge ${badgeClass}">${shift}</span></td>`;
+                    }
+                    
+                    if (isCurrentUser && badgeShift) {
+                        const userRoleEl = document.getElementById('userRole');
+                        if (userRoleEl) userRoleEl.textContent = `${currentUser.role} | Turno: ${badgeShift}`;
+                        const headerShiftBadge = document.querySelector('.shift-badge');
+                        if (headerShiftBadge) headerShiftBadge.textContent = `TURNO: ${badgeShift}`;
+                        
+                        // Guardar el turno en currentUser y sincronizar a Firebase
+                        if (currentUser.shift !== badgeShift) {
+                            currentUser.shift = badgeShift;
+                            localStorage.setItem('riskOps_currentUser', JSON.stringify(currentUser));
+                            syncActiveSessionToFirebase();
+                            loadExcelTasks();
+                        }
+                    }
+                    trHTML += '</tr>';
+                    tableBody.innerHTML += trHTML;
+                }
             }
         }
     } catch(e) {
-        console.error("Error cargando horario", e);
-        if (weekSelector) weekSelector.innerHTML = '<option>Error al cargar información</option>';
+        console.log("No se pudo cargar el horario", e);
     }
 }
 
-async function loadTeletrabajo() {
-    const weekSelector = document.getElementById('teletrabajoWeekSelector');
-    const tableHead = document.getElementById('teletrabajoTableHead');
-    const tableBody = document.getElementById('teletrabajoTableBody');
-
-    if (tableBody) tableBody.innerHTML = `<tr><td colspan="3" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-loader-alt bx-spin"></i> Cargando Teletrabajo...</td></tr>`;
-
-    try {
-        if (!currentUser) return;
-        const uid = currentUser.uid || "*";
-        const assignments = await getCurrentUserTelework(uid);
-        
-        if (!assignments || assignments.length === 0) {
-            if (weekSelector) weekSelector.innerHTML = '<option>Sin información disponible</option>';
-            if (tableBody) tableBody.innerHTML = `<tr><td colspan="3" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-info-circle"></i> No hay teletrabajo asignado</td></tr>`;
-            return;
-        }
-
-        if (weekSelector) {
-            weekSelector.innerHTML = '';
-            assignments.forEach((a, idx) => {
-                weekSelector.innerHTML += `<option value="${idx}">${escapeHTML(a.weekLabel)}</option>`;
-            });
-            weekSelector.value = assignments.length - 1;
+function loadTeletrabajo() {
+    fetch('Teletrabajo/Teletrabajo.xlsx?v=' + Date.now())
+        .then(res => {
+            if(!res.ok) throw new Error("No se encontró el archivo de Teletrabajo");
+            return res.arrayBuffer();
+        })
+        .then(data => {
+            const workbook = XLSX.read(data, {type: 'array'});
+            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(firstSheet, {header: 1, defval: ""});
             
-            const newSelector = weekSelector.cloneNode(true);
-            weekSelector.parentNode.replaceChild(newSelector, weekSelector);
+            let allBlocks = [];
             
-            newSelector.addEventListener('change', (e) => {
-                renderTelework(assignments[e.target.value]);
-            });
-            renderTelework(assignments[newSelector.value]);
-        } else {
-            renderTelework(assignments[assignments.length - 1]);
-        }
-
-        function renderTelework(assignment) {
-            if (!assignment || !assignment.days) return;
-            
-            if (tableHead) {
-                tableHead.innerHTML = `
-                    <tr>
-                        <th style="padding: 12px; font-weight: 600; text-align: left; position: sticky; left: 0; background: var(--bg-panel); z-index: 1;">GESTOR</th>
-                        <th style="padding: 12px; font-weight: 600; text-align: center;">DÍAS PROGRAMADOS</th>
-                        <th style="padding: 12px; font-weight: 600; text-align: center;">ESTADO</th>
-                    </tr>
-                `;
+            for(let r = 0; r < rows.length; r++) {
+                for(let c = 0; c < rows[r].length; c++) {
+                    // Bloque mejorado: busca etiquetas claras de calendario
+                    const cellVal = String(rows[r][c]).trim();
+                    const lowCell = cellVal.toLowerCase();
+                    if(lowCell.includes('semana') || lowCell.includes('teletrabajo') || /^\d{1,2}\/\d{1,2}/.test(cellVal)) {
+                        let block = {
+                            label: cellVal,
+                            startRow: r,
+                            colIndex: c,
+                            data: []
+                        };
+                        
+                        // Buscamos filas debajo de este título que tengan nombres
+                        for(let i = r + 1; i < rows.length; i++) {
+                            const gestor = rows[i] ? rows[i][c] : null;
+                            const dia = rows[i] ? rows[i][c+1] : null;
+                            
+                            if(!gestor || String(gestor).trim() === '') break;
+                            if(String(gestor).trim().toUpperCase() === 'GESTOR') continue; 
+                            
+                            block.data.push({
+                                gestor: String(gestor).trim(),
+                                dia: String(dia || '').trim()
+                            });
+                        }
+                        
+                        if(block.data.length > 0) allBlocks.push(block);
+                    }
+                }
             }
             
-            if (tableBody) {
-                const gestorName = currentUser.name || "Gestor";
-                const isTelework = assignment.days.length > 0;
-                const daysStr = isTelework ? assignment.days.join(", ") : "-";
-                const badge = isTelework ? `<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--success);">HOME OFFICE</span>` : `<span class="badge pending">PRESENCIAL</span>`;
+            if(allBlocks.length === 0) return;
+            
+            const weekSelector = document.getElementById('teletrabajoWeekSelector');
+            const tableHead = document.getElementById('teletrabajoTableHead');
+            const tableBody = document.getElementById('teletrabajoTableBody');
+            
+            const allTeleGestores = new Set();
+            allBlocks.forEach(b => {
+                b.data.forEach(r => {
+                    if (r.gestor) allTeleGestores.add(String(r.gestor).trim());
+                });
+            });
+            const sortedTeleGestores = Array.from(allTeleGestores).sort((a,b) => a.localeCompare(b));
+
+            let defaultBlockIdx = allBlocks.length - 1;
+
+            setupCustomMultiSelect('teletrabajoGestorMultiSelect', sortedTeleGestores, () => {
+                renderTeletrabajoBlock(allBlocks[weekSelector ? weekSelector.value : defaultBlockIdx]);
+            });
+
+            if(weekSelector) {
+                weekSelector.innerHTML = '';
+                allBlocks.forEach((block, idx) => {
+                    weekSelector.innerHTML += `<option value="${escapeHTML(String(idx))}">${escapeHTML(block.label)}</option>`;
+                });
                 
-                tableBody.innerHTML = `
-                    <tr class="hover-highlight" style="border-bottom: 1px solid var(--glass-border); background: rgba(59,130,246,0.1);">
-                        <td style="padding: 12px; font-weight: 600; text-align: left; color: var(--accent-primary); position: sticky; left: 0; background: var(--bg-dark); z-index: 1;">${gestorName}</td>
-                        <td style="padding: 12px; text-align: center;">${daysStr}</td>
-                        <td style="padding: 12px; text-align: center;">${badge}</td>
+                weekSelector.value = defaultBlockIdx;
+                
+                weekSelector.addEventListener('change', (e) => {
+                    renderTeletrabajoBlock(allBlocks[e.target.value]);
+                });
+                
+                renderTeletrabajoBlock(allBlocks[defaultBlockIdx]);
+            }
+            
+            function renderTeletrabajoBlock(block) {
+                const selectedList = getSelectedMultiSelectValues('teletrabajoGestorMultiSelect');
+                tableHead.innerHTML = `
+                    <tr style="border-bottom: 1px solid var(--glass-border);">
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: left; position: sticky; left: 0; background: var(--bg-panel); z-index: 2;">GESTOR <i class='bx bx-refresh' style='cursor:pointer; margin-left:5px;' onclick='loadTeletrabajo()' title='Refrescar Teletrabajo'></i></th>
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">DÍA</th>
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">MODALIDAD</th>
                     </tr>
                 `;
+                
+                tableBody.innerHTML = '';
+                block.data.forEach(row => {
+                    if (selectedList.length > 0 && !selectedList.some(sel => normalizeName(row.gestor) === normalizeName(sel))) {
+                        return;
+                    }
+
+                    let isCurrentUser = (currentUser && namesMatch(row.gestor, currentUser.name));
+                    
+                    if (currentUser && currentUser.role === 'Gestor' && !isCurrentUser) return;
+
+                    let bgClass = isCurrentUser ? 'rgba(59,130,246,0.1)' : 'transparent';
+                    
+                    let isTeletrabajo = row.dia && row.dia.toLowerCase() !== 'nan';
+                    let estadoHtml = isTeletrabajo ? `<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--success);">HOME OFFICE</span>` : `<span class="badge pending">PRESENCIAL</span>`;
+                    
+                    tableBody.innerHTML += `
+                        <tr class="hover-highlight" style="border-bottom: 1px solid var(--glass-border); background: ${bgClass};">
+                            <td style="padding: 12px; font-weight: 600; text-align: left; color: ${isCurrentUser ? 'var(--accent-primary)' : 'var(--text-primary)'}; position: sticky; left: 0; background: ${isCurrentUser ? 'var(--bg-dark)' : 'var(--bg-panel)'}; z-index: 1;">${row.gestor}</td>
+                            <td style="padding: 12px; text-align: center;">${isTeletrabajo ? row.dia : '-'}</td>
+                            <td style="padding: 12px; text-align: center;">${estadoHtml}</td>
+                        </tr>
+                    `;
+                });
             }
-        }
-    } catch(e) {
-        console.error("Error cargando teletrabajo", e);
-        if (weekSelector) weekSelector.innerHTML = '<option>Error al cargar información</option>';
-    }
+        })
+        .catch(err => {
+            console.error("Error cargando Teletrabajo:", err);
+            const tb = document.getElementById('teletrabajoTableBody');
+            if(tb) tb.innerHTML = `<tr><td colspan="3" style="padding: 20px; color: var(--danger); text-align: center;">No se pudo cargar Teletrabajo.xlsx o no existe.</td></tr>`;
+        });
 }
 
 let allLoadedPermissions = [];
@@ -1996,7 +1964,6 @@ function renderQuickDocs(selectedTaskName) {
         const isVideo = matchedDoc.toLowerCase().endsWith('.mp4');
         const isWord = matchedDoc.toLowerCase().endsWith('.docx') || matchedDoc.toLowerCase().endsWith('.doc');
         const isExcel = matchedDoc.toLowerCase().endsWith('.xlsx') || matchedDoc.toLowerCase().endsWith('.xls');
-        const isPriv = isPrivateDoc(matchedDoc);
         
         let icon = 'bx-file-pdf';
         let color = '#FF5A5A'; // PDF red
@@ -2005,24 +1972,14 @@ function renderQuickDocs(selectedTaskName) {
         else if (isWord) { icon = 'bx-file-blank'; color = '#2563EB'; } // Word blue
         else if (isExcel) { icon = 'bx-table'; color = '#10B981'; } // Excel green
 
-        const isPrivPdf = isPrivatePdf(matchedDoc);
-        const isPrivVid = isPrivateVideo(matchedDoc);
-        const docHref = getDocUrl(matchedDoc);
-        const targetAttrQ = (isPrivPdf) ? 'target="_blank" rel="noopener noreferrer"' : (isPrivVid ? '' : 'target="_blank"');
-        const clickHandlerQ = isPrivVid ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(matchedDoc)}');"` : '';
-        const badgeQ = isPrivPdf
-            ? `<span style="display:inline-block; margin-left:6px; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>`
-            : (isPrivVid ? `<span style="display:inline-block; margin-left:6px; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(245,158,11,0.2); color:#F59E0B; font-weight:600;">PENDIENTE</span>` : '');
-
         container.innerHTML += `
             <div style="margin-bottom: 12px; background: rgba(0, 180, 216, 0.1); padding: 10px; border-radius: var(--radius-md); border: 1px dashed var(--accent-primary);">
                 <span style="font-size: 10px; color: var(--accent-primary); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 4px; margin-bottom: 6px;">
                     <i class='bx bxs-star'></i> Sugerido para esta tarea
                 </span>
-                <a href="${docHref}" ${targetAttrQ} ${clickHandlerQ} class="doc-link" style="background: transparent; padding: 0; display: flex; align-items: center; gap: 10px;">
+                <a href="${getDocUrl(matchedDoc)}" target="_blank" class="doc-link" style="background: transparent; padding: 0; display: flex; align-items: center; gap: 10px;">
                     <i class='bx ${icon}' style="font-size: 20px; color: ${color};"></i>
-                    <span style="color: var(--text-primary); font-weight: 500; font-size: 13px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(matchedDoc.replace(/\.[^/.]+$/, ""))}</span>
-                    ${badgeQ}
+                    <span style="color: var(--text-primary); font-weight: 500; font-size: 13px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${matchedDoc.replace(/\.[^/.]+$/, "")}</span>
                 </a>
             </div>
             <div style="height: 1px; background: var(--glass-border); margin: 10px 0;"></div>
@@ -2036,7 +1993,6 @@ function renderQuickDocs(selectedTaskName) {
         const isVideo = file.toLowerCase().endsWith('.mp4');
         const isWord = file.toLowerCase().endsWith('.docx') || file.toLowerCase().endsWith('.doc');
         const isExcel = file.toLowerCase().endsWith('.xlsx') || file.toLowerCase().endsWith('.xls');
-        const isPriv = isPrivateDoc(file);
         
         let icon = 'bx-file-pdf';
         let color = '#FF5A5A'; // PDF red
@@ -2045,20 +2001,10 @@ function renderQuickDocs(selectedTaskName) {
         else if (isWord) { icon = 'bx-file-blank'; color = '#2563EB'; } // Word blue
         else if (isExcel) { icon = 'bx-table'; color = '#10B981'; } // Excel green
 
-        const isPrivPdfL = isPrivatePdf(file);
-        const isPrivVidL = isPrivateVideo(file);
-        const fileHref = getDocUrl(file);
-        const targetAttrL = isPrivPdfL ? 'target="_blank" rel="noopener noreferrer"' : (isPrivVidL ? '' : 'target="_blank"');
-        const clickHandlerL = isPrivVidL ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(file)}');"` : '';
-        const badgeL = isPrivPdfL
-            ? `<span style="display:inline-block; margin-left:auto; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>`
-            : (isPrivVidL ? `<span style="display:inline-block; margin-left:auto; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(245,158,11,0.2); color:#F59E0B; font-weight:600;">PENDIENTE</span>` : '');
-
         container.innerHTML += `
-            <a href="${fileHref}" ${targetAttrL} ${clickHandlerL} class="doc-link" style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
-                <i class='bx ${icon}' style="font-size: 18px; color: ${color}; flex-shrink: 0;"></i>
-                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; flex-grow: 1;">${escapeHTML(file.replace(/\.[^/.]+$/, ""))}</span>
-                ${badgeL}
+            <a href="${getDocUrl(file)}" target="_blank" class="doc-link" style="margin-bottom: 8px;">
+                <i class='bx ${icon}' style="font-size: 18px; color: ${color};"></i>
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;">${file.replace(/\.[^/.]+$/, "")}</span>
             </a>
         `;
     });
@@ -2474,13 +2420,7 @@ async function initApp() {
             else if (taskName.includes('seon')) matchedDoc = "Validación SEON.mp4";
             
             if (matchedDoc) {
-                if (isPrivatePdf(matchedDoc)) {
-                    window.open(getDocUrl(matchedDoc), "_blank", "noopener,noreferrer");
-                } else if (isPrivateVideo(matchedDoc)) {
-                    handlePrivateDocAccess(matchedDoc);
-                } else {
-                    window.open(getDocUrl(matchedDoc), "_blank");
-                }
+                window.open(getDocUrl(matchedDoc), "_blank");
             } else {
                 alert("No se encontró un documento específico para esta tarea. Por favor, búscalo en la pestaña Documentación.");
             }
@@ -2589,20 +2529,10 @@ async function initApp() {
                 else if(isExcel) { icon = 'bx-table'; color = '#10B981'; } // Excel green
                 else if(isHtml) { icon = 'bx-globe'; color = '#F59E0B'; } // HTML orange
 
-                const isPrivPdfG = isPrivatePdf(file);
-                const isPrivVidG = isPrivateVideo(file);
-                const gridHref = escapeHTML(getDocUrl(file));
-                const targetAttrG = isPrivPdfG ? 'target="_blank" rel="noopener noreferrer"' : (isPrivVidG ? '' : 'target="_blank"');
-                const clickAttrG = isPrivVidG ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(file)}');"` : '';
-                const badgeG = isPrivPdfG
-                    ? `<span style="font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>`
-                    : (isPrivVidG ? `<span style="font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(245,158,11,0.2); color:#F59E0B; font-weight:600;">PENDIENTE</span>` : '');
-
                 docsGrid.innerHTML += `
-                    <a href="${gridHref}" ${targetAttrG} ${clickAttrG} class="glass-panel" style="padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; transition: transform 0.2s;">
+                    <a href="${escapeHTML(getDocUrl(file))}" target="_blank" class="glass-panel" style="padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; transition: transform 0.2s;">
                         <i class='bx ${icon}' style="font-size: 40px; color: ${color};"></i>
                         <span style="font-size: 14px; color: var(--text-primary); font-weight: 500;">${escapeHTML(file.replace(/\.[^/.]+$/, ""))}</span>
-                        ${badgeG}
                     </a>
                 `;
             });
