@@ -1045,38 +1045,56 @@ function getShiftForDate(rows, allScheduleBlocks, gestorName, date) {
     return 'Por Asignar';
 }
 
-// Catálogo de Documentos Internos / Confidenciales protegidos (retirados del artefacto público web)
-const PRIVATE_INTERNAL_DOCS = [
+// Catálogo de Documentos Privados alojados en el repositorio privado
+const PRIVATE_PDF_DOCS = [
     "Guia Jira EGT - Proveedor de Casino.pdf",
     "Instructivo de revisión de apuestas casino.pdf",
     "Instructivo de validación de GGR Casino.pdf",
     "Política Procedimiento De Aprobación De Retiros.pdf",
     "Procedimiento Identificación de jineteo.pdf",
     "Proceso de Eliminación de Cuentas - Implementaciones.pdf",
-    "VALIDACIÓN DE ABUSO DE BONOS EN CAMPAÑAS DE CRM.pdf",
+    "VALIDACIÓN DE ABUSO DE BONOS EN CAMPAÑAS DE CRM.pdf"
+];
+
+const PENDING_VIDEO_DOCS = [
     "Revisión de Eventos Deportivos.mp4",
     "Revisión de Eventos.mp4",
     "Validación SEON.mp4"
 ];
 
-function isPrivateDoc(fileName) {
+const GITHUB_PRIVATE_DOCS_BASE = "https://github.com/RiesgoVirtualsoft/riskmanager-internal-docs/blob/main/Procedimientos/";
+
+function isPrivatePdf(fileName) {
     if (!fileName) return false;
-    return PRIVATE_INTERNAL_DOCS.includes(fileName);
+    return PRIVATE_PDF_DOCS.includes(fileName);
+}
+
+function isPrivateVideo(fileName) {
+    if (!fileName) return false;
+    return PENDING_VIDEO_DOCS.includes(fileName);
+}
+
+function isPrivateDoc(fileName) {
+    return isPrivatePdf(fileName) || isPrivateVideo(fileName);
 }
 
 window.handlePrivateDocAccess = function(fileName) {
-    const cleanName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "Documento interno";
-    alert(`[ACCESO RESTRINGIDO - DOCUMENTO INTERNO / CONFIDENCIAL]\n\nProcedimiento: "${cleanName}"\n\nEste documento contiene procedimientos operativos internos y reglas de negocio del área de Riesgo.\nHa sido retirado del repositorio web público por seguridad de la información.\n\nEstado: PENDING_PRIVATE_DOCUMENT_MIGRATION (migración a repositorio privado riskmanager-internal-docs).`);
+    const cleanName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "Recurso multimedia";
+    alert(`[ACCESO RESTRINGIDO - RECURSO MULTIMEDIA]\n\nRecurso: "${cleanName}"\n\nEste recurso audiovisual corresponde a una capacitación interna del área de Riesgo.\nActualmente no se encuentra un archivo físico disponible en el repositorio público.\n\nEstado: PENDING_PRIVATE_DOCUMENT_MIGRATION.`);
 };
 
 function getDocUrl(fileName) {
-    if (isPrivateDoc(fileName)) {
+    if (!fileName) return "#";
+    if (isPrivatePdf(fileName)) {
+        return GITHUB_PRIVATE_DOCS_BASE + encodeURIComponent(fileName);
+    }
+    if (isPrivateVideo(fileName)) {
         return "#";
     }
     if (fileName === "Manual_Usuario_Penka.html") {
         return "Procesos/Manual_Usuario_Penka.html";
     }
-    return "Procesos/" + fileName;
+    return "Procesos/" + encodeURI(fileName);
 }
 
 let taskStateCache = {};
@@ -2002,18 +2020,24 @@ function renderQuickDocs(selectedTaskName) {
         else if (isWord) { icon = 'bx-file-blank'; color = '#2563EB'; } // Word blue
         else if (isExcel) { icon = 'bx-table'; color = '#10B981'; } // Excel green
 
-        const clickHandler = isPriv ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(matchedDoc)}');"` : '';
-        const badgeRestringido = isPriv ? `<span style="display:inline-block; margin-left:6px; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>` : '';
+        const isPrivPdf = isPrivatePdf(matchedDoc);
+        const isPrivVid = isPrivateVideo(matchedDoc);
+        const docHref = getDocUrl(matchedDoc);
+        const targetAttrQ = (isPrivPdf) ? 'target="_blank" rel="noopener noreferrer"' : (isPrivVid ? '' : 'target="_blank"');
+        const clickHandlerQ = isPrivVid ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(matchedDoc)}');"` : '';
+        const badgeQ = isPrivPdf
+            ? `<span style="display:inline-block; margin-left:6px; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>`
+            : (isPrivVid ? `<span style="display:inline-block; margin-left:6px; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(245,158,11,0.2); color:#F59E0B; font-weight:600;">PENDIENTE</span>` : '');
 
         container.innerHTML += `
             <div style="margin-bottom: 12px; background: rgba(0, 180, 216, 0.1); padding: 10px; border-radius: var(--radius-md); border: 1px dashed var(--accent-primary);">
                 <span style="font-size: 10px; color: var(--accent-primary); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 4px; margin-bottom: 6px;">
                     <i class='bx bxs-star'></i> Sugerido para esta tarea
                 </span>
-                <a href="${getDocUrl(matchedDoc)}" ${isPriv ? '' : 'target="_blank"'} ${clickHandler} class="doc-link" style="background: transparent; padding: 0; display: flex; align-items: center; gap: 10px;">
+                <a href="${docHref}" ${targetAttrQ} ${clickHandlerQ} class="doc-link" style="background: transparent; padding: 0; display: flex; align-items: center; gap: 10px;">
                     <i class='bx ${icon}' style="font-size: 20px; color: ${color};"></i>
                     <span style="color: var(--text-primary); font-weight: 500; font-size: 13px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(matchedDoc.replace(/\.[^/.]+$/, ""))}</span>
-                    ${badgeRestringido}
+                    ${badgeQ}
                 </a>
             </div>
             <div style="height: 1px; background: var(--glass-border); margin: 10px 0;"></div>
@@ -2036,14 +2060,20 @@ function renderQuickDocs(selectedTaskName) {
         else if (isWord) { icon = 'bx-file-blank'; color = '#2563EB'; } // Word blue
         else if (isExcel) { icon = 'bx-table'; color = '#10B981'; } // Excel green
 
-        const clickHandler = isPriv ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(file)}');"` : '';
-        const badgeRestringido = isPriv ? `<span style="display:inline-block; margin-left:auto; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>` : '';
+        const isPrivPdfL = isPrivatePdf(file);
+        const isPrivVidL = isPrivateVideo(file);
+        const fileHref = getDocUrl(file);
+        const targetAttrL = isPrivPdfL ? 'target="_blank" rel="noopener noreferrer"' : (isPrivVidL ? '' : 'target="_blank"');
+        const clickHandlerL = isPrivVidL ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(file)}');"` : '';
+        const badgeL = isPrivPdfL
+            ? `<span style="display:inline-block; margin-left:auto; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>`
+            : (isPrivVidL ? `<span style="display:inline-block; margin-left:auto; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(245,158,11,0.2); color:#F59E0B; font-weight:600;">PENDIENTE</span>` : '');
 
         container.innerHTML += `
-            <a href="${getDocUrl(file)}" ${isPriv ? '' : 'target="_blank"'} ${clickHandler} class="doc-link" style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+            <a href="${fileHref}" ${targetAttrL} ${clickHandlerL} class="doc-link" style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
                 <i class='bx ${icon}' style="font-size: 18px; color: ${color}; flex-shrink: 0;"></i>
                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; flex-grow: 1;">${escapeHTML(file.replace(/\.[^/.]+$/, ""))}</span>
-                ${badgeRestringido}
+                ${badgeL}
             </a>
         `;
     });
@@ -2459,7 +2489,9 @@ async function initApp() {
             else if (taskName.includes('seon')) matchedDoc = "Validación SEON.mp4";
             
             if (matchedDoc) {
-                if (isPrivateDoc(matchedDoc)) {
+                if (isPrivatePdf(matchedDoc)) {
+                    window.open(getDocUrl(matchedDoc), "_blank", "noopener,noreferrer");
+                } else if (isPrivateVideo(matchedDoc)) {
                     handlePrivateDocAccess(matchedDoc);
                 } else {
                     window.open(getDocUrl(matchedDoc), "_blank");
@@ -2572,16 +2604,20 @@ async function initApp() {
                 else if(isExcel) { icon = 'bx-table'; color = '#10B981'; } // Excel green
                 else if(isHtml) { icon = 'bx-globe'; color = '#F59E0B'; } // HTML orange
 
-                const isPriv = isPrivateDoc(file);
-                const clickAttr = isPriv ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(file)}');"` : '';
-                const targetAttr = isPriv ? '' : 'target="_blank"';
-                const badgeRestringido = isPriv ? `<span style="font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>` : '';
+                const isPrivPdfG = isPrivatePdf(file);
+                const isPrivVidG = isPrivateVideo(file);
+                const gridHref = escapeHTML(getDocUrl(file));
+                const targetAttrG = isPrivPdfG ? 'target="_blank" rel="noopener noreferrer"' : (isPrivVidG ? '' : 'target="_blank"');
+                const clickAttrG = isPrivVidG ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(file)}');"` : '';
+                const badgeG = isPrivPdfG
+                    ? `<span style="font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>`
+                    : (isPrivVidG ? `<span style="font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(245,158,11,0.2); color:#F59E0B; font-weight:600;">PENDIENTE</span>` : '');
 
                 docsGrid.innerHTML += `
-                    <a href="${escapeHTML(getDocUrl(file))}" ${targetAttr} ${clickAttr} class="glass-panel" style="padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; transition: transform 0.2s;">
+                    <a href="${gridHref}" ${targetAttrG} ${clickAttrG} class="glass-panel" style="padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; transition: transform 0.2s;">
                         <i class='bx ${icon}' style="font-size: 40px; color: ${color};"></i>
                         <span style="font-size: 14px; color: var(--text-primary); font-weight: 500;">${escapeHTML(file.replace(/\.[^/.]+$/, ""))}</span>
-                        ${badgeRestringido}
+                        ${badgeG}
                     </a>
                 `;
             });
