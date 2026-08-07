@@ -1045,16 +1045,36 @@ function getShiftForDate(rows, allScheduleBlocks, gestorName, date) {
     return 'Por Asignar';
 }
 
-// Mapeo de URLs para documentos (especialmente videos pesados alojados en Google Drive)
-const documentUrls = {
-    "Revisión de Eventos Deportivos.mp4": "https://drive.google.com/file/d/1UqccsnUwTG6tgPcDYdUeLnf9XqvGzSoc/view?usp=sharing",
-    "Revisión de Eventos.mp4": "https://drive.google.com/file/d/1SB9ePi1EOJU05hzOsxOyl7BeNvCN1hOh/view?usp=sharing",
-    "Validación SEON.mp4": "https://drive.google.com/file/d/1JFf5basGD0gmrAVIy5AlMK1DBHYgE6JC/view?usp=sharing"
+// Catálogo de Documentos Internos / Confidenciales protegidos (retirados del artefacto público web)
+const PRIVATE_INTERNAL_DOCS = [
+    "Guia Jira EGT - Proveedor de Casino.pdf",
+    "Instructivo de revisión de apuestas casino.pdf",
+    "Instructivo de validación de GGR Casino.pdf",
+    "Política Procedimiento De Aprobación De Retiros.pdf",
+    "Procedimiento Identificación de jineteo.pdf",
+    "Proceso de Eliminación de Cuentas - Implementaciones.pdf",
+    "VALIDACIÓN DE ABUSO DE BONOS EN CAMPAÑAS DE CRM.pdf",
+    "Revisión de Eventos Deportivos.mp4",
+    "Revisión de Eventos.mp4",
+    "Validación SEON.mp4"
+];
+
+function isPrivateDoc(fileName) {
+    if (!fileName) return false;
+    return PRIVATE_INTERNAL_DOCS.includes(fileName);
+}
+
+window.handlePrivateDocAccess = function(fileName) {
+    const cleanName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "Documento interno";
+    alert(`[ACCESO RESTRINGIDO - DOCUMENTO INTERNO / CONFIDENCIAL]\n\nProcedimiento: "${cleanName}"\n\nEste documento contiene procedimientos operativos internos y reglas de negocio del área de Riesgo.\nHa sido retirado del repositorio web público por seguridad de la información.\n\nEstado: PENDING_PRIVATE_DOCUMENT_MIGRATION (migración a repositorio privado riskmanager-internal-docs).`);
 };
 
 function getDocUrl(fileName) {
-    if (documentUrls[fileName]) {
-        return documentUrls[fileName];
+    if (isPrivateDoc(fileName)) {
+        return "#";
+    }
+    if (fileName === "Manual_Usuario_Penka.html") {
+        return "Procesos/Manual_Usuario_Penka.html";
     }
     return "Procesos/" + fileName;
 }
@@ -1232,7 +1252,7 @@ async function loadExcelTasks() {
     } catch(err) {
         console.error("Error loading tasks:", err);
         const container = document.querySelector('.tree-container');
-        if(container) container.innerHTML = `<div style="padding: 20px; color: var(--danger);"><i class="bx bx-error-circle"></i> Error cargando tareas: ${escapeHTML(err.message)}</div>`;
+        if(container) container.innerHTML = `<div style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-shield-quarter" style="font-size: 28px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i>Matriz de tareas de riesgo protegida.<br><small style="color: var(--text-muted);">La matriz operativa de tareas ha sido restringida del entorno público de demostración (clasificación confidencial interna).</small></div>`;
     }
 }
 
@@ -1449,7 +1469,11 @@ async function loadSchedule() {
             }
         }
     } catch(e) {
-        console.log("No se pudo cargar el horario", e);
+        console.log("Horario no disponible en entorno público", e);
+        const tableBody = document.getElementById('scheduleTableBody');
+        if(tableBody) {
+            tableBody.innerHTML = `<tr><td colspan="8" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-lock-alt" style="font-size: 24px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i>Horario operativo protegido.<br><small style="color: var(--text-muted);">Los datos de programación personal de turnos han sido restringidos del entorno público de demostración (PII).</small></td></tr>`;
+        }
     }
 }
 
@@ -1571,7 +1595,7 @@ function loadTeletrabajo() {
         .catch(err => {
             console.error("Error cargando Teletrabajo:", err);
             const tb = document.getElementById('teletrabajoTableBody');
-            if(tb) tb.innerHTML = `<tr><td colspan="3" style="padding: 20px; color: var(--danger); text-align: center;">No se pudo cargar Teletrabajo.xlsx o no existe.</td></tr>`;
+            if(tb) tb.innerHTML = `<tr><td colspan="3" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-lock-alt" style="margin-right: 6px; color: var(--accent-primary);"></i>Programación de teletrabajo protegida (restringida en entorno público por protección de datos personales).</td></tr>`;
         });
 }
 
@@ -1964,6 +1988,7 @@ function renderQuickDocs(selectedTaskName) {
         const isVideo = matchedDoc.toLowerCase().endsWith('.mp4');
         const isWord = matchedDoc.toLowerCase().endsWith('.docx') || matchedDoc.toLowerCase().endsWith('.doc');
         const isExcel = matchedDoc.toLowerCase().endsWith('.xlsx') || matchedDoc.toLowerCase().endsWith('.xls');
+        const isPriv = isPrivateDoc(matchedDoc);
         
         let icon = 'bx-file-pdf';
         let color = '#FF5A5A'; // PDF red
@@ -1972,14 +1997,18 @@ function renderQuickDocs(selectedTaskName) {
         else if (isWord) { icon = 'bx-file-blank'; color = '#2563EB'; } // Word blue
         else if (isExcel) { icon = 'bx-table'; color = '#10B981'; } // Excel green
 
+        const clickHandler = isPriv ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(matchedDoc)}');"` : '';
+        const badgeRestringido = isPriv ? `<span style="display:inline-block; margin-left:6px; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>` : '';
+
         container.innerHTML += `
             <div style="margin-bottom: 12px; background: rgba(0, 180, 216, 0.1); padding: 10px; border-radius: var(--radius-md); border: 1px dashed var(--accent-primary);">
                 <span style="font-size: 10px; color: var(--accent-primary); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 4px; margin-bottom: 6px;">
                     <i class='bx bxs-star'></i> Sugerido para esta tarea
                 </span>
-                <a href="${getDocUrl(matchedDoc)}" target="_blank" class="doc-link" style="background: transparent; padding: 0; display: flex; align-items: center; gap: 10px;">
+                <a href="${getDocUrl(matchedDoc)}" ${isPriv ? '' : 'target="_blank"'} ${clickHandler} class="doc-link" style="background: transparent; padding: 0; display: flex; align-items: center; gap: 10px;">
                     <i class='bx ${icon}' style="font-size: 20px; color: ${color};"></i>
-                    <span style="color: var(--text-primary); font-weight: 500; font-size: 13px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${matchedDoc.replace(/\.[^/.]+$/, "")}</span>
+                    <span style="color: var(--text-primary); font-weight: 500; font-size: 13px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHTML(matchedDoc.replace(/\.[^/.]+$/, ""))}</span>
+                    ${badgeRestringido}
                 </a>
             </div>
             <div style="height: 1px; background: var(--glass-border); margin: 10px 0;"></div>
@@ -1993,6 +2022,7 @@ function renderQuickDocs(selectedTaskName) {
         const isVideo = file.toLowerCase().endsWith('.mp4');
         const isWord = file.toLowerCase().endsWith('.docx') || file.toLowerCase().endsWith('.doc');
         const isExcel = file.toLowerCase().endsWith('.xlsx') || file.toLowerCase().endsWith('.xls');
+        const isPriv = isPrivateDoc(file);
         
         let icon = 'bx-file-pdf';
         let color = '#FF5A5A'; // PDF red
@@ -2001,10 +2031,14 @@ function renderQuickDocs(selectedTaskName) {
         else if (isWord) { icon = 'bx-file-blank'; color = '#2563EB'; } // Word blue
         else if (isExcel) { icon = 'bx-table'; color = '#10B981'; } // Excel green
 
+        const clickHandler = isPriv ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(file)}');"` : '';
+        const badgeRestringido = isPriv ? `<span style="display:inline-block; margin-left:auto; font-size:9px; padding:2px 6px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>` : '';
+
         container.innerHTML += `
-            <a href="${getDocUrl(file)}" target="_blank" class="doc-link" style="margin-bottom: 8px;">
-                <i class='bx ${icon}' style="font-size: 18px; color: ${color};"></i>
-                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;">${file.replace(/\.[^/.]+$/, "")}</span>
+            <a href="${getDocUrl(file)}" ${isPriv ? '' : 'target="_blank"'} ${clickHandler} class="doc-link" style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+                <i class='bx ${icon}' style="font-size: 18px; color: ${color}; flex-shrink: 0;"></i>
+                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; flex-grow: 1;">${escapeHTML(file.replace(/\.[^/.]+$/, ""))}</span>
+                ${badgeRestringido}
             </a>
         `;
     });
@@ -2420,7 +2454,11 @@ async function initApp() {
             else if (taskName.includes('seon')) matchedDoc = "Validación SEON.mp4";
             
             if (matchedDoc) {
-                window.open(getDocUrl(matchedDoc), "_blank");
+                if (isPrivateDoc(matchedDoc)) {
+                    handlePrivateDocAccess(matchedDoc);
+                } else {
+                    window.open(getDocUrl(matchedDoc), "_blank");
+                }
             } else {
                 alert("No se encontró un documento específico para esta tarea. Por favor, búscalo en la pestaña Documentación.");
             }
@@ -2529,10 +2567,16 @@ async function initApp() {
                 else if(isExcel) { icon = 'bx-table'; color = '#10B981'; } // Excel green
                 else if(isHtml) { icon = 'bx-globe'; color = '#F59E0B'; } // HTML orange
 
+                const isPriv = isPrivateDoc(file);
+                const clickAttr = isPriv ? `onclick="event.preventDefault(); handlePrivateDocAccess('${escapeHTML(file)}');"` : '';
+                const targetAttr = isPriv ? '' : 'target="_blank"';
+                const badgeRestringido = isPriv ? `<span style="font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(239,68,68,0.2); color:var(--danger); font-weight:600;">INTERNO</span>` : '';
+
                 docsGrid.innerHTML += `
-                    <a href="${escapeHTML(getDocUrl(file))}" target="_blank" class="glass-panel" style="padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; transition: transform 0.2s;">
+                    <a href="${escapeHTML(getDocUrl(file))}" ${targetAttr} ${clickAttr} class="glass-panel" style="padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; transition: transform 0.2s;">
                         <i class='bx ${icon}' style="font-size: 40px; color: ${color};"></i>
                         <span style="font-size: 14px; color: var(--text-primary); font-weight: 500;">${escapeHTML(file.replace(/\.[^/.]+$/, ""))}</span>
+                        ${badgeRestringido}
                     </a>
                 `;
             });
