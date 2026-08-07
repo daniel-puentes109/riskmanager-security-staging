@@ -1138,10 +1138,14 @@ updateClock(); // Initial call
 const TASK_DATA_SOURCE = 'staging'; // 'staging' | 'firebase' (futuro)
 const STAGING_CATALOG_URL   = 'staging_task_catalog.json';
 const STAGING_ASSIGNMENTS_URL = 'staging_task_assignments.json';
+const STAGING_SCHEDULE_URL = 'staging_schedule_assignments.json';
+const STAGING_TELEWORK_URL = 'staging_telework_assignments.json';
 
 // Cache interno (evita múltiples fetches)
 let _catalogCache = null;
 let _assignmentsCache = null;
+let _scheduleCache = null;
+let _teleworkCache = null;
 let _progressCache = {};   // { uid_date_taskId: { status, notes, lastUpdated } }
 
 /**
@@ -1261,13 +1265,52 @@ async function updateTaskProgress(uid, date, taskId, updates) {
  * con su estado de progreso actual.
  * @returns {Promise<{ setId, setLabel, tasks: Array }>|null>}
  */
+async function getCurrentUserSchedule(uid) {
+    if (TASK_DATA_SOURCE === 'staging') {
+        if (!_scheduleCache) {
+            try {
+                const res = await fetch(STAGING_SCHEDULE_URL + '?t=' + Date.now());
+                if (!res.ok) return null;
+                _scheduleCache = await res.json();
+            } catch(e) { return null; }
+        }
+        let filtered = _scheduleCache.filter(a => a.uid === uid);
+        if (filtered.length === 0) {
+            filtered = _scheduleCache.filter(a => a.uid === '*');
+        }
+        return filtered; // array of week schedules
+    }
+    return null;
+}
+
+async function getCurrentUserTelework(uid) {
+    if (TASK_DATA_SOURCE === 'staging') {
+        if (!_teleworkCache) {
+            try {
+                const res = await fetch(STAGING_TELEWORK_URL + '?t=' + Date.now());
+                if (!res.ok) return null;
+                _teleworkCache = await res.json();
+            } catch(e) { return null; }
+        }
+        let filtered = _teleworkCache.filter(a => a.uid === uid);
+        if (filtered.length === 0) {
+            filtered = _teleworkCache.filter(a => a.uid === '*');
+        }
+        return filtered; // array of week telework
+    }
+    return null;
+}
+
 async function getCurrentUserTasks() {
-    if (!currentUser || !currentUser.uid) {
-        console.log("TASK_DEBUG uid=MISSING");
+    if (!currentUser) {
+        console.log("TASK_DEBUG currentUser=MISSING");
         return null;
     }
+    const uid = currentUser.uid || "*";
+    if (!currentUser.uid) {
+        console.log("TASK_DEBUG uid=MISSING (using wildcard *)");
+    }
 
-    const uid = currentUser.uid;
     const today = new Date();
     const dateStr = today.getFullYear() + '-' +
         String(today.getMonth() + 1).padStart(2, '0') + '-' +
@@ -1412,350 +1455,156 @@ async function loadExcelTasks() {
 
 // Initializar parseo del Horario Personal
 async function loadSchedule() {
+    const tableHead = document.getElementById('scheduleTableHead');
+    const tableBody = document.getElementById('scheduleTableBody');
+    const weekSelector = document.getElementById('weekSelector');
+
+    if (tableBody) tableBody.innerHTML = `<tr><td colspan="8" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-loader-alt bx-spin"></i> Cargando Horario...</td></tr>`;
+
     try {
-        const url = encodeURI('Horario/Horario 2026.xlsx') + '?t=' + Date.now();
-        const response = await fetch(url);
-        if(!response.ok) throw new Error("Fallo red");
-        const arrayBuffer = await response.arrayBuffer();
-        const workbook = XLSX.read(arrayBuffer, {type: 'array'});
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+        if (!currentUser) return;
+        const uid = currentUser.uid || "*";
+        const assignments = await getCurrentUserSchedule(uid);
         
-        function formatExcelDate(serial) {
-            if(!serial) return "";
-            const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-            
-            // Si ya es un string que parece fecha (ej: "2026-06-08" o "2026-06-08T00:00...")
-            if (typeof serial === 'string' && (serial.includes('-') || serial.includes('/'))) {
-                const d = new Date(serial);
-                if (!isNaN(d.getTime())) {
-                    return `${d.getUTCDate()} ${monthNames[d.getUTCMonth()]}`;
-                }
-            }
-            
-            // Si es un número (serial de Excel)
-            if (!isNaN(serial)) {
-                const epochUTC = Date.UTC(1899, 11, 30);
-                const d = new Date(epochUTC + parseFloat(serial) * 86400000);
-                return `${d.getUTCDate()} ${monthNames[d.getUTCMonth()]}`;
-            }
-            
-            return "";
-        }
-        
-        let allScheduleBlocks = [];
-        if (rows && rows.length > 2) {
-            for(let rIdx = 0; rIdx < rows.length; rIdx++) {
-                const testRow = rows[rIdx];
-                if (!testRow || testRow.length < 2) continue;
-                
-                if (formatExcelDate(testRow[1]) !== "") {
-                    const nextR = rows[rIdx+1];
-                    if (nextR && nextR.length > 1 && (nextR[1] === 'Lunes' || nextR[1] === 'Martes')) {
-                        // Encontramos un bloque, vamos a ver la fecha inicial y final
-                        let firstDate = formatExcelDate(testRow[1]);
-                        let lastDate = firstDate;
-                        for(let c = 1; c < testRow.length; c++) {
-                            if(formatExcelDate(testRow[c])) lastDate = formatExcelDate(testRow[c]);
-                        }
-                        
-                        allScheduleBlocks.push({
-                            startRow: rIdx,
-                            label: `Semana del ${firstDate} al ${lastDate}`
-                        });
-                        rIdx++; // Saltar la fila de días
-                    }
-                }
-            }
+        if (!assignments || assignments.length === 0) {
+            if (weekSelector) weekSelector.innerHTML = '<option>Sin información disponible</option>';
+            if (tableBody) tableBody.innerHTML = `<tr><td colspan="8" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-info-circle"></i> No hay horario asignado</td></tr>`;
+            return;
         }
 
-        globalScheduleRows = rows;
-        globalScheduleBlocks = allScheduleBlocks;
-        
-        if (allScheduleBlocks.length === 0) return; // No hay datos válidos
+        if (weekSelector) {
+            weekSelector.innerHTML = '';
+            assignments.forEach((a, idx) => {
+                weekSelector.innerHTML += `<option value="${idx}">${escapeHTML(a.weekLabel)}</option>`;
+            });
+            weekSelector.value = assignments.length - 1; // Select the last one by default
+            
+            // Remove old listeners to prevent duplicates
+            const newSelector = weekSelector.cloneNode(true);
+            weekSelector.parentNode.replaceChild(newSelector, weekSelector);
+            
+            newSelector.addEventListener('change', (e) => {
+                renderSchedule(assignments[e.target.value]);
+            });
+            renderSchedule(assignments[newSelector.value]);
+        } else {
+            renderSchedule(assignments[assignments.length - 1]);
+        }
 
-        const tableHead = document.getElementById('scheduleTableHead');
-        const tableBody = document.getElementById('scheduleTableBody');
-        
-        if(tableHead && tableBody && rows.length > 2) {
+        function renderSchedule(assignment) {
+            if (!assignment || !assignment.days) return;
             
-            const weekSelector = document.getElementById('weekSelector');
-            
-            // Encontrar el bloque correspondiente a hoy
-            let defaultBlockRow = null;
-            const today = new Date();
-            for (let block of allScheduleBlocks) {
-                const dateRow = rows[block.startRow];
-                for (let c = 1; c < dateRow.length; c++) {
-                    const serial = dateRow[c];
-                    if (serial) {
-                        let cellDate = null;
-                        if (!isNaN(serial)) {
-                            cellDate = excelToJSDate(serial);
-                        } else if (typeof serial === 'string' && (serial.includes('-') || serial.includes('/'))) {
-                            const parsed = new Date(serial);
-                            if (!isNaN(parsed.getTime())) {
-                                cellDate = parsed;
-                            }
-                        }
-                        
-                        if (cellDate && isSameDate(cellDate, today)) {
-                            defaultBlockRow = block.startRow;
-                            break;
-                        }
-                    }
-                }
-                if (defaultBlockRow !== null) break;
+            if (tableHead) {
+                tableHead.innerHTML = `
+                    <tr style="border-bottom: 1px solid var(--glass-border);">
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: left; position: sticky; left: 0; background: var(--bg-panel); z-index: 2;">GESTOR</th>
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Lunes</th>
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Martes</th>
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Miércoles</th>
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Jueves</th>
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Viernes</th>
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Sábado</th>
+                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">Domingo</th>
+                    </tr>
+                `;
             }
             
-            if (defaultBlockRow === null) {
-                defaultBlockRow = allScheduleBlocks[allScheduleBlocks.length - 1].startRow;
-            }
-            
-            const scheduleGestorFilter = document.getElementById('scheduleGestorFilter');
-            let selectedGestor = '';
-
-            // Extraer lista única de gestores de la hoja de cálculo
-            const allGestoresSet = new Set();
-            allScheduleBlocks.forEach(block => {
-                for (let rIdx = block.startRow + 2; rIdx < rows.length; rIdx++) {
-                    const row = rows[rIdx];
-                    if (!row || !row[0] || String(row[0]).trim() === '' || String(row[0]).trim().toUpperCase() === 'GESTOR') break;
-                    allGestoresSet.add(String(row[0]).trim());
-                }
-            });
-            const sortedGestores = Array.from(allGestoresSet).sort((a, b) => a.localeCompare(b));
-
-            setupCustomMultiSelect('scheduleGestorMultiSelect', sortedGestores, (selectedList) => {
-                renderScheduleBlock(parseInt(weekSelector ? weekSelector.value : defaultBlockRow));
-            });
-
-            if (weekSelector) {
-                weekSelector.innerHTML = '';
-                allScheduleBlocks.forEach(block => {
-                    weekSelector.innerHTML += `<option value="${escapeHTML(String(block.startRow))}">${escapeHTML(block.label)}</option>`;
+            if (tableBody) {
+                const gestorName = currentUser.name || "Gestor";
+                const d = assignment.days;
+                let trHTML = `<tr class="hover-highlight" style="border-bottom: 1px solid var(--glass-border); background: rgba(59,130,246,0.1);">`;
+                trHTML += `<td style="padding: 12px; font-weight: 600; text-align: left; color: var(--accent-primary); position: sticky; left: 0; background: var(--bg-dark); z-index: 1;">${gestorName}</td>`;
+                
+                const daysMap = [d.mon, d.tue, d.wed, d.thu, d.fri, d.sat, d.sun];
+                daysMap.forEach(shift => {
+                    let badgeClass = 'pending';
+                    const sLower = (shift || '').toLowerCase();
+                    if(/\d\s*(am|pm)/i.test(shift)) badgeClass = 'in-progress';
+                    else if(sLower.includes('vacacion')) badgeClass = 'vacaciones-badge';
+                    else if(sLower.includes('descansa')) badgeClass = 'descanso-badge';
+                    else if(sLower.includes('familia')) badgeClass = 'familia-badge';
+                    
+                    trHTML += `<td style="padding: 12px; text-align: center; white-space: nowrap;"><span class="badge ${badgeClass}">${shift || '-'}</span></td>`;
                 });
                 
-                weekSelector.value = defaultBlockRow;
-                
-                weekSelector.addEventListener('change', (e) => {
-                    renderScheduleBlock(parseInt(e.target.value));
-                });
-            }
-            
-            // Renderizar el bloque inicial
-            renderScheduleBlock(defaultBlockRow);
-            
-            function renderScheduleBlock(blockStartRow) {
-                const dateRow = rows[blockStartRow];
-                const dayRow = rows[blockStartRow + 1];
-                const selectedList = getSelectedMultiSelectValues('scheduleGestorMultiSelect');
-                
-                let numCols = 0;
-                for(let i=1; i<dateRow.length; i++) {
-                    if(formatExcelDate(dateRow[i])) numCols = i;
-                }
-                if(numCols === 0) numCols = 7; // fallback
-                
-                let headHTML = '<tr style="border-bottom: 1px solid var(--glass-border);">';
-                headHTML += `<th style="padding: 12px; color: var(--accent-primary); text-align: left; position: sticky; left: 0; background: var(--bg-panel); z-index: 2;">GESTOR <i class='bx bx-refresh' style='cursor:pointer; margin-left:5px;' onclick='loadSchedule()' title='Refrescar Horario'></i></th>`;
-                for(let i = 1; i <= numCols; i++) {
-                    const dayName = dayRow[i] || `Día ${i}`;
-                    const dateParsed = formatExcelDate(dateRow[i]);
-                    const subText = dateParsed ? `<br><span style="font-size: 11px; font-weight: normal; color: var(--text-secondary);">${dateParsed}</span>` : '';
-                    headHTML += `<th style="padding: 12px; color: var(--accent-primary); text-align: center;">${dayName}${subText}</th>`;
-                }
-                headHTML += '</tr>';
-                tableHead.innerHTML = headHTML;
-                
-                tableBody.innerHTML = '';
-                for(let rowIndex = blockStartRow + 2; rowIndex < rows.length; rowIndex++) {
-                    const r = rows[rowIndex];
-                    if (!r || !r[0] || String(r[0]).trim() === '' || String(r[0]).trim().toUpperCase() === 'GESTOR') break;
-                    
-                    const gestorName = String(r[0]).trim();
-                    if (selectedList.length > 0 && !selectedList.some(sel => normalizeName(gestorName) === normalizeName(sel))) {
-                        continue;
-                    }
-
-                    let isCurrentUser = (currentUser && namesMatch(gestorName, currentUser.name));
-                    
-                    if (currentUser && currentUser.role === 'Gestor' && !isCurrentUser) continue;
-
-                    let bgClass = isCurrentUser ? 'rgba(59,130,246,0.1)' : 'transparent';
-                    
-                    let trHTML = `<tr class="hover-highlight" style="border-bottom: 1px solid var(--glass-border); background: ${bgClass};">`;
-                    trHTML += `<td style="padding: 12px; font-weight: 600; text-align: left; color: ${isCurrentUser ? 'var(--accent-primary)' : 'var(--text-primary)'}; position: sticky; left: 0; background: ${isCurrentUser ? 'var(--bg-dark)' : 'var(--bg-panel)'}; z-index: 1;">${gestorName}</td>`;
-                    
-                    // Encontrar el turno para mostrar en el badge principal (corresponde a hoy)
-                    let badgeShift = getShiftForDate(rows, allScheduleBlocks, gestorName, new Date());
-                    
-                    for(let i = 1; i <= numCols; i++) {
-                        const shift = r[i] || 'Descansa';
-                        
-                        let badgeClass = 'pending';
-                        const sLower = normalizeName(shift);
-                        if(/\d\s*(am|pm)/i.test(shift)) badgeClass = 'in-progress';
-                        else if(sLower.includes('vacacion')) badgeClass = 'vacaciones-badge';
-                        else if(sLower.includes('descansa')) badgeClass = 'descanso-badge';
-                        else if(sLower.includes('familia')) badgeClass = 'familia-badge';
-                        
-                        trHTML += `<td style="padding: 12px; text-align: center; white-space: nowrap;"><span class="badge ${badgeClass}">${shift}</span></td>`;
-                    }
-                    
-                    if (isCurrentUser && badgeShift) {
-                        const userRoleEl = document.getElementById('userRole');
-                        if (userRoleEl) userRoleEl.textContent = `${currentUser.role} | Turno: ${badgeShift}`;
-                        const headerShiftBadge = document.querySelector('.shift-badge');
-                        if (headerShiftBadge) headerShiftBadge.textContent = `TURNO: ${badgeShift}`;
-                        
-                        // Guardar el turno en currentUser y sincronizar a Firebase
-                        if (currentUser.shift !== badgeShift) {
-                            currentUser.shift = badgeShift;
-                            localStorage.setItem('riskOps_currentUser', JSON.stringify(currentUser));
-                            syncActiveSessionToFirebase();
-                            loadExcelTasks();
-                        }
-                    }
-                    trHTML += '</tr>';
-                    tableBody.innerHTML += trHTML;
-                }
+                trHTML += '</tr>';
+                tableBody.innerHTML = trHTML;
             }
         }
     } catch(e) {
-        console.warn("Horario no disponible en entorno de pruebas:", e.message || e);
-        const tableBody = document.getElementById('scheduleTableBody');
-        if(tableBody) {
-            tableBody.innerHTML = `<tr><td colspan="8" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-lock-alt" style="font-size: 24px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i><strong>Información interna temporalmente no disponible en este entorno</strong><br><small style="color: var(--text-muted); display: inline-block; margin-top: 4px;">Los datos de programación personal de turnos están protegidos en este entorno (PII).</small></td></tr>`;
-        }
+        console.error("Error cargando horario", e);
+        if (weekSelector) weekSelector.innerHTML = '<option>Error al cargar información</option>';
     }
 }
 
-function loadTeletrabajo() {
-    fetch('Teletrabajo/Teletrabajo.xlsx?v=' + Date.now())
-        .then(res => {
-            if(!res.ok) throw new Error("No se encontró el archivo de Teletrabajo");
-            return res.arrayBuffer();
-        })
-        .then(data => {
-            const workbook = XLSX.read(data, {type: 'array'});
-            const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-            const rows = XLSX.utils.sheet_to_json(firstSheet, {header: 1, defval: ""});
-            
-            let allBlocks = [];
-            
-            for(let r = 0; r < rows.length; r++) {
-                for(let c = 0; c < rows[r].length; c++) {
-                    // Bloque mejorado: busca etiquetas claras de calendario
-                    const cellVal = String(rows[r][c]).trim();
-                    const lowCell = cellVal.toLowerCase();
-                    if(lowCell.includes('semana') || lowCell.includes('teletrabajo') || /^\d{1,2}\/\d{1,2}/.test(cellVal)) {
-                        let block = {
-                            label: cellVal,
-                            startRow: r,
-                            colIndex: c,
-                            data: []
-                        };
-                        
-                        // Buscamos filas debajo de este título que tengan nombres
-                        for(let i = r + 1; i < rows.length; i++) {
-                            const gestor = rows[i] ? rows[i][c] : null;
-                            const dia = rows[i] ? rows[i][c+1] : null;
-                            
-                            if(!gestor || String(gestor).trim() === '') break;
-                            if(String(gestor).trim().toUpperCase() === 'GESTOR') continue; 
-                            
-                            block.data.push({
-                                gestor: String(gestor).trim(),
-                                dia: String(dia || '').trim()
-                            });
-                        }
-                        
-                        if(block.data.length > 0) allBlocks.push(block);
-                    }
-                }
-            }
-            
-            if(allBlocks.length === 0) return;
-            
-            const weekSelector = document.getElementById('teletrabajoWeekSelector');
-            const tableHead = document.getElementById('teletrabajoTableHead');
-            const tableBody = document.getElementById('teletrabajoTableBody');
-            
-            const allTeleGestores = new Set();
-            allBlocks.forEach(b => {
-                b.data.forEach(r => {
-                    if (r.gestor) allTeleGestores.add(String(r.gestor).trim());
-                });
+async function loadTeletrabajo() {
+    const weekSelector = document.getElementById('teletrabajoWeekSelector');
+    const tableHead = document.getElementById('teletrabajoTableHead');
+    const tableBody = document.getElementById('teletrabajoTableBody');
+
+    if (tableBody) tableBody.innerHTML = `<tr><td colspan="3" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-loader-alt bx-spin"></i> Cargando Teletrabajo...</td></tr>`;
+
+    try {
+        if (!currentUser) return;
+        const uid = currentUser.uid || "*";
+        const assignments = await getCurrentUserTelework(uid);
+        
+        if (!assignments || assignments.length === 0) {
+            if (weekSelector) weekSelector.innerHTML = '<option>Sin información disponible</option>';
+            if (tableBody) tableBody.innerHTML = `<tr><td colspan="3" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-info-circle"></i> No hay teletrabajo asignado</td></tr>`;
+            return;
+        }
+
+        if (weekSelector) {
+            weekSelector.innerHTML = '';
+            assignments.forEach((a, idx) => {
+                weekSelector.innerHTML += `<option value="${idx}">${escapeHTML(a.weekLabel)}</option>`;
             });
-            const sortedTeleGestores = Array.from(allTeleGestores).sort((a,b) => a.localeCompare(b));
-
-            let defaultBlockIdx = allBlocks.length - 1;
-
-            if (weekSelector) {
-                weekSelector.innerHTML = '';
-                allBlocks.forEach((block, idx) => {
-                    weekSelector.innerHTML += `<option value="${idx}">${escapeHTML(block.label)}</option>`;
-                });
-                
-                weekSelector.value = defaultBlockIdx;
-                
-                weekSelector.addEventListener('change', (e) => {
-                    renderTeletrabajoBlock(parseInt(e.target.value));
-                });
-            }
-
-            setupCustomMultiSelect('teletrabajoGestorMultiSelect', sortedTeleGestores, (selectedList) => {
-                renderTeletrabajoBlock(parseInt(weekSelector ? weekSelector.value : defaultBlockIdx));
+            weekSelector.value = assignments.length - 1;
+            
+            const newSelector = weekSelector.cloneNode(true);
+            weekSelector.parentNode.replaceChild(newSelector, weekSelector);
+            
+            newSelector.addEventListener('change', (e) => {
+                renderTelework(assignments[e.target.value]);
             });
+            renderTelework(assignments[newSelector.value]);
+        } else {
+            renderTelework(assignments[assignments.length - 1]);
+        }
+
+        function renderTelework(assignment) {
+            if (!assignment || !assignment.days) return;
             
-            renderTeletrabajoBlock(defaultBlockIdx);
-            
-            function renderTeletrabajoBlock(blockIdx) {
-                const block = allBlocks[blockIdx];
-                if (!block) return;
-                
-                if (tableHead) {
-                    tableHead.innerHTML = `
-                        <tr>
-                            <th style="padding: 12px; font-weight: 600; text-align: left; position: sticky; left: 0; background: var(--bg-panel); z-index: 1;">GESTOR</th>
-                            <th style="padding: 12px; font-weight: 600; text-align: center;">DÍA PROGRAMADO</th>
-                            <th style="padding: 12px; font-weight: 600; text-align: center;">ESTADO</th>
-                        </tr>
-                    `;
-                }
-                
-                tableBody.innerHTML = '';
-                const selectedList = getSelectedMultiSelectValues('teletrabajoGestorMultiSelect');
-                
-                block.data.forEach(row => {
-                    // Filtrar por gestor si hay alguno seleccionado en el multiselect
-                    if (selectedList && selectedList.length > 0) {
-                        const matches = selectedList.some(sel => namesMatch(sel, row.gestor));
-                        if (!matches) return;
-                    }
-                    
-                    let isCurrentUser = currentUser && namesMatch(currentUser.name, row.gestor);
-                    let bgClass = isCurrentUser ? 'rgba(59,130,246,0.1)' : 'transparent';
-                    
-                    let isTeletrabajo = row.dia && row.dia.toLowerCase() !== 'nan';
-                    let estadoHtml = isTeletrabajo ? `<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--success);">HOME OFFICE</span>` : `<span class="badge pending">PRESENCIAL</span>`;
-                    
-                    tableBody.innerHTML += `
-                        <tr class="hover-highlight" style="border-bottom: 1px solid var(--glass-border); background: ${bgClass};">
-                            <td style="padding: 12px; font-weight: 600; text-align: left; color: ${isCurrentUser ? 'var(--accent-primary)' : 'var(--text-primary)'}; position: sticky; left: 0; background: ${isCurrentUser ? 'var(--bg-dark)' : 'var(--bg-panel)'}; z-index: 1;">${row.gestor}</td>
-                            <td style="padding: 12px; text-align: center;">${isTeletrabajo ? row.dia : '-'}</td>
-                            <td style="padding: 12px; text-align: center;">${estadoHtml}</td>
-                        </tr>
-                    `;
-                });
+            if (tableHead) {
+                tableHead.innerHTML = `
+                    <tr>
+                        <th style="padding: 12px; font-weight: 600; text-align: left; position: sticky; left: 0; background: var(--bg-panel); z-index: 1;">GESTOR</th>
+                        <th style="padding: 12px; font-weight: 600; text-align: center;">DÍAS PROGRAMADOS</th>
+                        <th style="padding: 12px; font-weight: 600; text-align: center;">ESTADO</th>
+                    </tr>
+                `;
             }
-        })
-        .catch(err => {
-            console.warn("Teletrabajo no disponible en entorno de pruebas:", err.message || err);
-            const tb = document.getElementById('teletrabajoTableBody');
-            if(tb) tb.innerHTML = `<tr><td colspan="3" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-lock-alt" style="font-size: 24px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i><strong>Información interna temporalmente no disponible en este entorno</strong><br><small style="color: var(--text-muted); display: inline-block; margin-top: 4px;">La programación de teletrabajo está protegida en este entorno (PII).</small></td></tr>`;
-        });
+            
+            if (tableBody) {
+                const gestorName = currentUser.name || "Gestor";
+                const isTelework = assignment.days.length > 0;
+                const daysStr = isTelework ? assignment.days.join(", ") : "-";
+                const badge = isTelework ? `<span class="badge" style="background: rgba(16, 185, 129, 0.2); color: var(--success);">HOME OFFICE</span>` : `<span class="badge pending">PRESENCIAL</span>`;
+                
+                tableBody.innerHTML = `
+                    <tr class="hover-highlight" style="border-bottom: 1px solid var(--glass-border); background: rgba(59,130,246,0.1);">
+                        <td style="padding: 12px; font-weight: 600; text-align: left; color: var(--accent-primary); position: sticky; left: 0; background: var(--bg-dark); z-index: 1;">${gestorName}</td>
+                        <td style="padding: 12px; text-align: center;">${daysStr}</td>
+                        <td style="padding: 12px; text-align: center;">${badge}</td>
+                    </tr>
+                `;
+            }
+        }
+    } catch(e) {
+        console.error("Error cargando teletrabajo", e);
+        if (weekSelector) weekSelector.innerHTML = '<option>Error al cargar información</option>';
+    }
 }
 
 let allLoadedPermissions = [];

@@ -1,0 +1,20 @@
+[
+  {
+    "uid": "*",
+    "weekId": "week-01",
+    "weekLabel": "Semana del 3 al 9 de agosto",
+    "days": ["Miércoles"]
+  },
+  {
+    "uid": "*",
+    "weekId": "week-02",
+    "weekLabel": "Semana del 10 al 16 de agosto",
+    "days": ["Martes", "Jueves"]
+  },
+  {
+    "uid": "*",
+    "weekId": "week-03",
+    "weekLabel": "Semana del 17 al 23 de agosto",
+    "days": []
+  }
+]
