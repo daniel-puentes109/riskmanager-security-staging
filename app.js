@@ -1250,9 +1250,9 @@ async function loadExcelTasks() {
         }
         
     } catch(err) {
-        console.error("Error loading tasks:", err);
+        console.warn("Tareas de riesgo no disponibles en entorno de pruebas:", err.message || err);
         const container = document.querySelector('.tree-container');
-        if(container) container.innerHTML = `<div style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-shield-quarter" style="font-size: 28px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i>Matriz de tareas de riesgo protegida.<br><small style="color: var(--text-muted);">La matriz operativa de tareas ha sido restringida del entorno público de demostración (clasificación confidencial interna).</small></div>`;
+        if(container) container.innerHTML = `<div style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-shield-quarter" style="font-size: 28px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i><strong>Información interna temporalmente no disponible en este entorno</strong><br><small style="color: var(--text-muted); display: inline-block; margin-top: 4px;">La matriz operativa de tareas está protegida en este entorno de demostración (clasificación confidencial interna).</small></div>`;
     }
 }
 
@@ -1469,10 +1469,10 @@ async function loadSchedule() {
             }
         }
     } catch(e) {
-        console.log("Horario no disponible en entorno público", e);
+        console.warn("Horario no disponible en entorno de pruebas:", e.message || e);
         const tableBody = document.getElementById('scheduleTableBody');
         if(tableBody) {
-            tableBody.innerHTML = `<tr><td colspan="8" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-lock-alt" style="font-size: 24px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i>Horario operativo protegido.<br><small style="color: var(--text-muted);">Los datos de programación personal de turnos han sido restringidos del entorno público de demostración (PII).</small></td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan="8" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-lock-alt" style="font-size: 24px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i><strong>Información interna temporalmente no disponible en este entorno</strong><br><small style="color: var(--text-muted); display: inline-block; margin-top: 4px;">Los datos de programación personal de turnos están protegidos en este entorno (PII).</small></td></tr>`;
         }
     }
 }
@@ -1538,45 +1538,50 @@ function loadTeletrabajo() {
 
             let defaultBlockIdx = allBlocks.length - 1;
 
-            setupCustomMultiSelect('teletrabajoGestorMultiSelect', sortedTeleGestores, () => {
-                renderTeletrabajoBlock(allBlocks[weekSelector ? weekSelector.value : defaultBlockIdx]);
-            });
-
-            if(weekSelector) {
+            if (weekSelector) {
                 weekSelector.innerHTML = '';
                 allBlocks.forEach((block, idx) => {
-                    weekSelector.innerHTML += `<option value="${escapeHTML(String(idx))}">${escapeHTML(block.label)}</option>`;
+                    weekSelector.innerHTML += `<option value="${idx}">${escapeHTML(block.label)}</option>`;
                 });
                 
                 weekSelector.value = defaultBlockIdx;
                 
                 weekSelector.addEventListener('change', (e) => {
-                    renderTeletrabajoBlock(allBlocks[e.target.value]);
+                    renderTeletrabajoBlock(parseInt(e.target.value));
                 });
-                
-                renderTeletrabajoBlock(allBlocks[defaultBlockIdx]);
             }
+
+            setupCustomMultiSelect('teletrabajoGestorMultiSelect', sortedTeleGestores, (selectedList) => {
+                renderTeletrabajoBlock(parseInt(weekSelector ? weekSelector.value : defaultBlockIdx));
+            });
             
-            function renderTeletrabajoBlock(block) {
-                const selectedList = getSelectedMultiSelectValues('teletrabajoGestorMultiSelect');
-                tableHead.innerHTML = `
-                    <tr style="border-bottom: 1px solid var(--glass-border);">
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: left; position: sticky; left: 0; background: var(--bg-panel); z-index: 2;">GESTOR <i class='bx bx-refresh' style='cursor:pointer; margin-left:5px;' onclick='loadTeletrabajo()' title='Refrescar Teletrabajo'></i></th>
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">DÍA</th>
-                        <th style="padding: 12px; color: var(--accent-primary); text-align: center;">MODALIDAD</th>
-                    </tr>
-                `;
+            renderTeletrabajoBlock(defaultBlockIdx);
+            
+            function renderTeletrabajoBlock(blockIdx) {
+                const block = allBlocks[blockIdx];
+                if (!block) return;
+                
+                if (tableHead) {
+                    tableHead.innerHTML = `
+                        <tr>
+                            <th style="padding: 12px; font-weight: 600; text-align: left; position: sticky; left: 0; background: var(--bg-panel); z-index: 1;">GESTOR</th>
+                            <th style="padding: 12px; font-weight: 600; text-align: center;">DÍA PROGRAMADO</th>
+                            <th style="padding: 12px; font-weight: 600; text-align: center;">ESTADO</th>
+                        </tr>
+                    `;
+                }
                 
                 tableBody.innerHTML = '';
+                const selectedList = getSelectedMultiSelectValues('teletrabajoGestorMultiSelect');
+                
                 block.data.forEach(row => {
-                    if (selectedList.length > 0 && !selectedList.some(sel => normalizeName(row.gestor) === normalizeName(sel))) {
-                        return;
+                    // Filtrar por gestor si hay alguno seleccionado en el multiselect
+                    if (selectedList && selectedList.length > 0) {
+                        const matches = selectedList.some(sel => namesMatch(sel, row.gestor));
+                        if (!matches) return;
                     }
-
-                    let isCurrentUser = (currentUser && namesMatch(row.gestor, currentUser.name));
                     
-                    if (currentUser && currentUser.role === 'Gestor' && !isCurrentUser) return;
-
+                    let isCurrentUser = currentUser && namesMatch(currentUser.name, row.gestor);
                     let bgClass = isCurrentUser ? 'rgba(59,130,246,0.1)' : 'transparent';
                     
                     let isTeletrabajo = row.dia && row.dia.toLowerCase() !== 'nan';
@@ -1593,9 +1598,9 @@ function loadTeletrabajo() {
             }
         })
         .catch(err => {
-            console.error("Error cargando Teletrabajo:", err);
+            console.warn("Teletrabajo no disponible en entorno de pruebas:", err.message || err);
             const tb = document.getElementById('teletrabajoTableBody');
-            if(tb) tb.innerHTML = `<tr><td colspan="3" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-lock-alt" style="margin-right: 6px; color: var(--accent-primary);"></i>Programación de teletrabajo protegida (restringida en entorno público por protección de datos personales).</td></tr>`;
+            if(tb) tb.innerHTML = `<tr><td colspan="3" style="padding: 24px; color: var(--text-secondary); text-align: center;"><i class="bx bx-lock-alt" style="font-size: 24px; color: var(--accent-primary); display: block; margin-bottom: 8px;"></i><strong>Información interna temporalmente no disponible en este entorno</strong><br><small style="color: var(--text-muted); display: inline-block; margin-top: 4px;">La programación de teletrabajo está protegida en este entorno (PII).</small></td></tr>`;
         });
 }
 
