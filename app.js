@@ -484,51 +484,6 @@ try {
             // We removed the aggressive onDisconnect hook because it was triggering falsely when Chrome paused the background tab
             // The admin dashboard's 2-minute lastActive timeout serves as a perfect fallback if the user actually closes the tab
             
-            // --- PATCH MARILYN LOGIN TIME (JUNE 10) ---
-            if (currentUser.uid === 'ATOXW8JKRNUdoy3wPlk1lI9zpTh2' && !localStorage.getItem('login_restored_v108')) {
-                let d = new Date();
-                if (d.getDate() === 10 && d.getMonth() === 5 && d.getFullYear() === 2026) {
-                    d.setHours(8, 10, 32, 0); // 8:10:32 AM
-                    currentUser.loginTime = d.toISOString();
-                    localStorage.setItem('riskOps_currentUser', JSON.stringify(currentUser));
-                    
-                    // Remove the fake 7:58 AM inactivity event that generated accidentally today
-                    let t = JSON.parse(localStorage.getItem('riskOps_timeline')) || [];
-                    t = t.filter(ev => !(ev.type === 'Inactividad' && new Date(ev.start).getHours() === 7 && new Date(ev.start).getMinutes() === 58));
-                    localStorage.setItem('riskOps_timeline', JSON.stringify(t));
-                    shiftTimeline = t;
-                    
-                    localStorage.setItem('login_restored_v108', 'true');
-                }
-            }
-            
-            // --- PATCH ORIANA LOGIN TIME (JUNE 16) ---
-            if (currentUser.uid === 'FcORj44ZBUfRPfP2UkGVKtDhcMJ2' && !localStorage.getItem('login_restored_oriana_june16_v2')) {
-                let d = new Date();
-                d.setHours(15, 0, 0, 0); // 3:00:00 PM
-                currentUser.loginTime = d.toISOString();
-                localStorage.setItem('riskOps_currentUser', JSON.stringify(currentUser));
-                localStorage.setItem('login_restored_oriana_june16_v2', 'true');
-            }
-            
-            // --- PATCH JOSUE LOGIN TIME (JUNE 17) ---
-            if (currentUser.uid === 'Fn6FKMB1SOVEVdvlpkoDSHrlO8n2' && !localStorage.getItem('login_restored_josue_june17')) {
-                let d = new Date();
-                d.setHours(8, 0, 0, 0); // 8:00:00 AM
-                currentUser.loginTime = d.toISOString();
-                localStorage.setItem('riskOps_currentUser', JSON.stringify(currentUser));
-                localStorage.setItem('login_restored_josue_june17', 'true');
-            }
-
-            // --- PATCH SEBASTIAN HINCAPIE LOGIN TIME (JUNE 24) ---
-            if (currentUser.uid === 'e3y3uNtszkTXoNtXyqAYbUc0nAn2' && !localStorage.getItem('login_restored_sebastian_june24')) {
-                let d = new Date();
-                d.setHours(8, 0, 0, 0); // 8:00:00 AM
-                currentUser.loginTime = d.toISOString();
-                localStorage.setItem('riskOps_currentUser', JSON.stringify(currentUser));
-                localStorage.setItem('login_restored_sebastian_june24', 'true');
-            }
-            
             // --- PATCH CLEAR FALSE INACTIVITY (JUNE 17 3PM & 7PM SHIFTS) ---
             if (!localStorage.getItem('inactivity_cleared_june17_v1')) {
                 if (currentUser.shift === '3pm - 11pm' || currentUser.shift === '7pm - 2am') {
@@ -1048,6 +1003,16 @@ function getShiftForDate(rows, allScheduleBlocks, gestorName, date) {
 }
 
 // Mapeo de URLs para documentos (especialmente videos pesados alojados en Google Drive)
+const privateGitHubDocs = {
+  "Guia Jira EGT - Proveedor de Casino.pdf": "https://github.com/RiesgoVirtualsoft/riskmanager-internal-docs/blob/main/Procedimientos/Guia%20Jira%20EGT%20-%20Proveedor%20de%20Casino.pdf",
+  "Instructivo de revisión de apuestas casino.pdf": "https://github.com/RiesgoVirtualsoft/riskmanager-internal-docs/blob/main/Procedimientos/Instructivo%20de%20revisi%C3%B3n%20de%20apuestas%20casino.pdf",
+  "Instructivo de validación de GGR Casino.pdf": "https://github.com/RiesgoVirtualsoft/riskmanager-internal-docs/blob/main/Procedimientos/Instructivo%20de%20validaci%C3%B3n%20de%20GGR%20Casino.pdf",
+  "Política Procedimiento De Aprobación De Retiros.pdf": "https://github.com/RiesgoVirtualsoft/riskmanager-internal-docs/blob/main/Procedimientos/Pol%C3%ADtica%20Procedimiento%20De%20Aprobaci%C3%B3n%20De%20Retiros.pdf",
+  "Procedimiento Identificación de jineteo.pdf": "https://github.com/RiesgoVirtualsoft/riskmanager-internal-docs/blob/main/Procedimientos/Procedimiento%20Identificaci%C3%B3n%20de%20jineteo.pdf",
+  "Proceso de Eliminación de Cuentas - Implementaciones.pdf": "https://github.com/RiesgoVirtualsoft/riskmanager-internal-docs/blob/main/Procedimientos/Proceso%20de%20Eliminaci%C3%B3n%20de%20Cuentas%20-%20Implementaciones.pdf",
+  "VALIDACIÓN DE ABUSO DE BONOS EN CAMPAÑAS DE CRM.pdf": "https://github.com/RiesgoVirtualsoft/riskmanager-internal-docs/blob/main/Procedimientos/VALIDACI%C3%93N%20DE%20ABUSO%20DE%20BONOS%20EN%20CAMPA%C3%91AS%20DE%20CRM.pdf"
+};
+
 const documentUrls = {
     "Revisión de Eventos Deportivos.mp4": "https://drive.google.com/file/d/1UqccsnUwTG6tgPcDYdUeLnf9XqvGzSoc/view?usp=sharing",
     "Revisión de Eventos.mp4": "https://drive.google.com/file/d/1SB9ePi1EOJU05hzOsxOyl7BeNvCN1hOh/view?usp=sharing",
@@ -1055,6 +1020,12 @@ const documentUrls = {
 };
 
 function getDocUrl(fileName) {
+    if (privateGitHubDocs[fileName]) {
+        return privateGitHubDocs[fileName];
+    }
+    if (fileName.endsWith('.mp4') && !documentUrls[fileName]) {
+        return "#PENDING_PRIVATE_DOCUMENT_MIGRATION";
+    }
     if (documentUrls[fileName]) {
         return documentUrls[fileName];
     }
@@ -1983,7 +1954,7 @@ function renderQuickDocs(selectedTaskName) {
                 <span style="font-size: 10px; color: var(--accent-primary); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 4px; margin-bottom: 6px;">
                     <i class='bx bxs-star'></i> Sugerido para esta tarea
                 </span>
-                <a href="${getDocUrl(matchedDoc)}" target="_blank" class="doc-link" style="background: transparent; padding: 0; display: flex; align-items: center; gap: 10px;">
+                <a href="${getDocUrl(matchedDoc)}" target="_blank" rel="noopener noreferrer" class="doc-link" style="background: transparent; padding: 0; display: flex; align-items: center; gap: 10px;">
                     <i class='bx ${icon}' style="font-size: 20px; color: ${color};"></i>
                     <span style="color: var(--text-primary); font-weight: 500; font-size: 13px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${matchedDoc.replace(/\.[^/.]+$/, "")}</span>
                 </a>
@@ -2008,7 +1979,7 @@ function renderQuickDocs(selectedTaskName) {
         else if (isExcel) { icon = 'bx-table'; color = '#10B981'; } // Excel green
 
         container.innerHTML += `
-            <a href="${getDocUrl(file)}" target="_blank" class="doc-link" style="margin-bottom: 8px;">
+            <a href="${getDocUrl(file)}" target="_blank" rel="noopener noreferrer" class="doc-link" style="margin-bottom: 8px;">
                 <i class='bx ${icon}' style="font-size: 18px; color: ${color};"></i>
                 <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left;">${file.replace(/\.[^/.]+$/, "")}</span>
             </a>
@@ -2536,7 +2507,7 @@ async function initApp() {
                 else if(isHtml) { icon = 'bx-globe'; color = '#F59E0B'; } // HTML orange
 
                 docsGrid.innerHTML += `
-                    <a href="${escapeHTML(getDocUrl(file))}" target="_blank" class="glass-panel" style="padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; transition: transform 0.2s;">
+                    <a href="${escapeHTML(getDocUrl(file))}" target="_blank" rel="noopener noreferrer" class="glass-panel" style="padding: 20px; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px; transition: transform 0.2s;">
                         <i class='bx ${icon}' style="font-size: 40px; color: ${color};"></i>
                         <span style="font-size: 14px; color: var(--text-primary); font-weight: 500;">${escapeHTML(file.replace(/\.[^/.]+$/, ""))}</span>
                     </a>
