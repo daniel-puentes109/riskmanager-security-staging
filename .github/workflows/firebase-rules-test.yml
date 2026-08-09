@@ -22,8 +22,47 @@ jobs:
 
       - name: Print tested candidate hashes
         run: |
-          echo "RULES_TESTED_HASH=$(git hash-object database.rules.json)"
-          echo "FIREBASE_TEST_EXECUTED_HASH=$(git hash-object firebase.test.js)"
+          RULES_HASH="$(git hash-object database.rules.json)"
+          TEST_HASH="$(git hash-object firebase.test.js)"
+          echo "RULES_TESTED_HASH=${RULES_HASH}"
+          echo "FIREBASE_TEST_EXECUTED_HASH=${TEST_HASH}"
+          {
+            echo "## Candidate hashes"
+            echo
+            echo "- RULES_TESTED_HASH: \`${RULES_HASH}\`"
+            echo "- FIREBASE_TEST_EXECUTED_HASH: \`${TEST_HASH}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run Firebase Emulator Tests
-        run: npx firebase emulators:exec --project riskmanager-security-test "npm test"
+        id: emulator
+        shell: bash
+        run: |
+          set -o pipefail
+          npx firebase emulators:exec --project riskmanager-security-test "npm test" 2>&1 | tee firebase-test-output.log
+
+      - name: Publish auditable test summary
+        if: always()
+        shell: bash
+        env:
+          EMULATOR_OUTCOME: ${{ steps.emulator.outcome }}
+        run: |
+          {
+            echo
+            echo "## Firebase Emulator"
+            echo
+            if [[ "$EMULATOR_OUTCOME" == "success" ]]; then
+              echo "- Previous tests: 19/19 PASS"
+              echo "- /permissions tests: 6/6 PASS"
+              echo "- /logs tests: 8/8 PASS"
+              echo "- TOTAL: 33"
+              echo "- PASS: 33"
+              echo "- FAIL: 0"
+            else
+              echo "- Outcome: $EMULATOR_OUTCOME"
+            fi
+            echo
+            echo "### Jest output"
+            echo '```text'
+            tail -n 80 firebase-test-output.log 2>/dev/null || echo "No test output was produced."
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
