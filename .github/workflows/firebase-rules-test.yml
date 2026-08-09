@@ -52,6 +52,7 @@ jobs:
 
       - name: Run announcement sanitizer smoke test
         id: announcements
+        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -112,3 +113,18 @@ jobs:
             cat xss-smoke-output.log 2>/dev/null || echo "No XSS smoke output was produced."
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce smoke test outcomes
+        if: always()
+        shell: bash
+        env:
+          ANNOUNCEMENTS_OUTCOME: ${{ steps.announcements.outcome }}
+          XSS_OUTCOME: ${{ steps.xss.outcome }}
+        run: |
+          if [[ "$ANNOUNCEMENTS_OUTCOME" != "success" ]]; then
+            while IFS= read -r line; do echo "::error::$line"; done < announcement-sanitizer-output.log
+            exit 1
+          fi
+          if [[ "$XSS_OUTCOME" != "success" ]]; then
+            exit 1
+          fi
