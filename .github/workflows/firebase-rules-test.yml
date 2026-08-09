@@ -58,6 +58,14 @@ jobs:
           set -o pipefail
           npm run test:announcements 2>&1 | tee announcement-sanitizer-output.log
 
+      - name: Run Supervisor UI alignment smoke test
+        id: role_ui
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:role-ui 2>&1 | tee role-ui-output.log
+
       - name: Run /logs XSS smoke test
         id: xss
         shell: bash
@@ -72,6 +80,7 @@ jobs:
           EMULATOR_OUTCOME: ${{ steps.emulator.outcome }}
           SHIFT_CLOSE_OUTCOME: ${{ steps.shift_close.outcome }}
           ANNOUNCEMENTS_OUTCOME: ${{ steps.announcements.outcome }}
+          ROLE_UI_OUTCOME: ${{ steps.role_ui.outcome }}
           XSS_OUTCOME: ${{ steps.xss.outcome }}
         run: |
           {
@@ -83,14 +92,17 @@ jobs:
               echo "- /permissions tests: 6/6 PASS"
               echo "- /logs tests: 8/8 PASS"
               echo "- shift closure tests: 2/2 PASS"
-              echo "- TOTAL: 35"
-              echo "- PASS: 35"
+              echo "- shift_reports privacy tests: 5/5 PASS"
+              echo "- active_sessions privacy tests: 6/6 PASS"
+              echo "- TOTAL: 46"
+              echo "- PASS: 46"
               echo "- FAIL: 0"
             else
               echo "- Outcome: $EMULATOR_OUTCOME"
             fi
             echo "- shift closure smoke: $SHIFT_CLOSE_OUTCOME"
             echo "- announcement sanitizer smoke: $ANNOUNCEMENTS_OUTCOME"
+            echo "- Supervisor UI alignment smoke: $ROLE_UI_OUTCOME"
             echo "- /logs XSS smoke: $XSS_OUTCOME"
             echo
             echo "### Jest output"
@@ -108,6 +120,11 @@ jobs:
             cat announcement-sanitizer-output.log 2>/dev/null || echo "No announcement sanitizer output was produced."
             echo '```'
             echo
+            echo "### Supervisor UI alignment smoke output"
+            echo '```text'
+            cat role-ui-output.log 2>/dev/null || echo "No role UI output was produced."
+            echo '```'
+            echo
             echo "### XSS smoke output"
             echo '```text'
             cat xss-smoke-output.log 2>/dev/null || echo "No XSS smoke output was produced."
@@ -119,10 +136,15 @@ jobs:
         shell: bash
         env:
           ANNOUNCEMENTS_OUTCOME: ${{ steps.announcements.outcome }}
+          ROLE_UI_OUTCOME: ${{ steps.role_ui.outcome }}
           XSS_OUTCOME: ${{ steps.xss.outcome }}
         run: |
           if [[ "$ANNOUNCEMENTS_OUTCOME" != "success" ]]; then
             while IFS= read -r line; do echo "::error::$line"; done < announcement-sanitizer-output.log
+            exit 1
+          fi
+          if [[ "$ROLE_UI_OUTCOME" != "success" ]]; then
+            while IFS= read -r line; do echo "::error::$line"; done < role-ui-output.log
             exit 1
           fi
           if [[ "$XSS_OUTCOME" != "success" ]]; then

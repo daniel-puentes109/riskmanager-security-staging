@@ -29,7 +29,8 @@ beforeEach(async () => {
         'other_gestor': { role: 'Gestor', status: 'Activo' }
       },
       shift_reports: {
-        'rep_other': { uid: 'other_gestor', gestor: 'Other' }
+        'rep_other': { uid: 'other_gestor', gestor: 'Other' },
+        'rep_gestor': { uid: 'gestor_789', gestor: 'Test Gestor' }
       },
       permissions: {
         'perm_own': { uid: 'gestor_789', status: 'Pendiente', notified: false },
@@ -173,6 +174,64 @@ describe('Supervisor Context', () => {
 
   it('DENY operaciones exclusivas de Admin', async () => {
     await assertFails(supDb.ref('users/new_gestor').set({ role: 'Gestor' }));
+  });
+});
+
+// C2. /shift_reports and /active_sessions least privilege
+describe('Monitoring Data Privacy', () => {
+  it('Gestor DENY read global /shift_reports', async () => {
+    const gestorDb = testEnv.authenticatedContext('gestor_789').database();
+    await assertFails(gestorDb.ref('shift_reports').once('value'));
+  });
+
+  it('Gestor DENY read shift_report de otro UID', async () => {
+    const gestorDb = testEnv.authenticatedContext('gestor_789').database();
+    await assertFails(gestorDb.ref('shift_reports/rep_other').once('value'));
+  });
+
+  it('Gestor ALLOW read shift_report propio por ID', async () => {
+    const gestorDb = testEnv.authenticatedContext('gestor_789').database();
+    await assertSucceeds(gestorDb.ref('shift_reports/rep_gestor').once('value'));
+  });
+
+  it('Gestor DENY read global /active_sessions', async () => {
+    const gestorDb = testEnv.authenticatedContext('gestor_789').database();
+    await assertFails(gestorDb.ref('active_sessions').once('value'));
+  });
+
+  it('Gestor DENY read active_session de otro UID', async () => {
+    const gestorDb = testEnv.authenticatedContext('gestor_789').database();
+    await assertFails(gestorDb.ref('active_sessions/other_gestor').once('value'));
+  });
+
+  it('Gestor ALLOW read active_session propia', async () => {
+    const gestorDb = testEnv.authenticatedContext('gestor_789').database();
+    await assertSucceeds(gestorDb.ref('active_sessions/gestor_789').once('value'));
+  });
+
+  it('Gestor ALLOW write active_session propia', async () => {
+    const gestorDb = testEnv.authenticatedContext('gestor_789').database();
+    await assertSucceeds(gestorDb.ref('active_sessions/gestor_789').update({ status: 'Inactivo' }));
+  });
+
+  it('Supervisor ALLOW read global /shift_reports', async () => {
+    const supDb = testEnv.authenticatedContext('sup_456').database();
+    await assertSucceeds(supDb.ref('shift_reports').once('value'));
+  });
+
+  it('Supervisor ALLOW read global /active_sessions', async () => {
+    const supDb = testEnv.authenticatedContext('sup_456').database();
+    await assertSucceeds(supDb.ref('active_sessions').once('value'));
+  });
+
+  it('Admin ALLOW read global /shift_reports', async () => {
+    const adminDb = testEnv.authenticatedContext('admin_123').database();
+    await assertSucceeds(adminDb.ref('shift_reports').once('value'));
+  });
+
+  it('Admin ALLOW read global /active_sessions', async () => {
+    const adminDb = testEnv.authenticatedContext('admin_123').database();
+    await assertSucceeds(adminDb.ref('active_sessions').once('value'));
   });
 });
 

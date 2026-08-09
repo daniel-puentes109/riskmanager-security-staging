@@ -24,7 +24,7 @@
       }
     },
     "shift_reports": {
-      ".read": "auth != null",
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'Admin' || root.child('users').child(auth.uid).child('role').val() === 'Supervisor')",
       ".indexOn": [
         "gestor",
         "timestamp",
@@ -32,6 +32,7 @@
         "uid"
       ],
       "$report_id": {
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'Admin' || root.child('users').child(auth.uid).child('role').val() === 'Supervisor' || data.child('uid').val() === auth.uid)",
         ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'Admin' || (!data.exists() && newData.exists() && newData.child('uid').val() === auth.uid) || (data.exists() && data.child('uid').val() === auth.uid && newData.exists() && newData.child('uid').val() === auth.uid))",
         "uid": {
           ".validate": "newData.val() === auth.uid"
@@ -75,7 +76,7 @@
       }
     },
     "active_sessions": {
-      ".read": "auth != null",
+      ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'Admin' || root.child('users').child(auth.uid).child('role').val() === 'Supervisor')",
       ".indexOn": [
         "status",
         "lastHeartbeat",
@@ -84,6 +85,7 @@
         "uid"
       ],
       "$session_id": {
+        ".read": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'Admin' || root.child('users').child(auth.uid).child('role').val() === 'Supervisor' || auth.uid === $session_id)",
         ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'Admin' || auth.uid === $session_id)"
       }
     },

@@ -7,7 +7,8 @@
     "test": "jest --runInBand",
     "test:xss": "node xss-smoke.js",
     "test:shift-close": "node shift-close-smoke.js",
-    "test:announcements": "node announcement-sanitizer-smoke.js"
+    "test:announcements": "node announcement-sanitizer-smoke.js",
+    "test:role-ui": "node role-ui-smoke.js"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^3.0.2",
