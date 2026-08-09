@@ -10,6 +10,66 @@ function escapeHTML(str) {
 }
 window.escapeHTML = escapeHTML;
 
+const ANNOUNCEMENT_ALLOWED_TAGS = new Set(['p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'a']);
+const ANNOUNCEMENT_DROP_CONTENT_TAGS = new Set([
+    'script', 'style', 'iframe', 'object', 'embed', 'template', 'noscript'
+]);
+
+function sanitizeAnnouncementHref(value) {
+    if (!value) return '';
+
+    const trimmed = String(value).trim();
+    const normalized = trimmed.replace(/[\u0000-\u0020\u007F]+/g, '');
+    if (!normalized || normalized.startsWith('//')) return '';
+
+    const schemeMatch = normalized.match(/^([a-z][a-z0-9+.-]*):/i);
+    if (schemeMatch && !['http', 'https', 'mailto'].includes(schemeMatch[1].toLowerCase())) {
+        return '';
+    }
+
+    return trimmed;
+}
+
+function sanitizeAnnouncementHTML(value) {
+    if (value === null || value === undefined) return '';
+
+    const template = document.createElement('template');
+    template.innerHTML = String(value);
+    const output = document.createElement('div');
+    const tagAliases = { b: 'strong', i: 'em', div: 'p' };
+
+    function appendSanitizedNode(sourceNode, targetParent) {
+        if (sourceNode.nodeType === Node.TEXT_NODE) {
+            targetParent.appendChild(document.createTextNode(sourceNode.textContent || ''));
+            return;
+        }
+
+        if (sourceNode.nodeType !== Node.ELEMENT_NODE) return;
+
+        const sourceTag = sourceNode.tagName.toLowerCase();
+        if (ANNOUNCEMENT_DROP_CONTENT_TAGS.has(sourceTag)) return;
+
+        const cleanTag = tagAliases[sourceTag] || sourceTag;
+        if (!ANNOUNCEMENT_ALLOWED_TAGS.has(cleanTag)) {
+            Array.from(sourceNode.childNodes).forEach(child => appendSanitizedNode(child, targetParent));
+            return;
+        }
+
+        const cleanNode = document.createElement(cleanTag);
+        if (cleanTag === 'a') {
+            const safeHref = sanitizeAnnouncementHref(sourceNode.getAttribute('href'));
+            if (safeHref) cleanNode.setAttribute('href', safeHref);
+        }
+
+        Array.from(sourceNode.childNodes).forEach(child => appendSanitizedNode(child, cleanNode));
+        targetParent.appendChild(cleanNode);
+    }
+
+    Array.from(template.content.childNodes).forEach(node => appendSanitizedNode(node, output));
+    return output.innerHTML;
+}
+window.sanitizeAnnouncementHTML = sanitizeAnnouncementHTML;
+
 // Auth Check
 const currentUserObj = localStorage.getItem('riskOps_currentUser');
 if (!currentUserObj && !window.location.href.includes('login.html')) {
@@ -5502,7 +5562,7 @@ function openNewComunicadoModal() {
 
 async function saveNewComunicado() {
     const title = document.getElementById('comunicadoTitle').value.trim();
-    const content = document.getElementById('comunicadoContent').innerHTML.trim();
+    const content = sanitizeAnnouncementHTML(document.getElementById('comunicadoContent').innerHTML).trim();
     
     if (!title || !content) {
         alert("Por favor llena todos los campos.");
@@ -5589,7 +5649,7 @@ function renderGestorComunicados() {
                     <h3 style="color: ${isRead ? 'var(--text-primary)' : 'var(--danger)'}; margin: 0; font-size: 18px;">${escapeHTML(c.title)}</h3>
                     <span style="font-size: 11px; color: var(--text-secondary); background: rgba(0,0,0,0.1); padding: 3px 8px; border-radius: 10px;">${formattedDate} por ${escapeHTML(c.author)}</span>
                 </div>
-                <div class="rich-text" style="font-size: 14px; color: var(--text-secondary); margin-top: 10px; line-height: 1.5; overflow-wrap: break-word; white-space: pre-wrap;">${escapeHTML(c.content)}</div>
+                <div class="rich-text" style="font-size: 14px; color: var(--text-secondary); margin-top: 10px; line-height: 1.5; overflow-wrap: break-word; white-space: pre-wrap;">${sanitizeAnnouncementHTML(c.content)}</div>
                 ${actionsHtml}
             </div>
         `;
@@ -5628,7 +5688,7 @@ function checkUnreadUrgentAnnouncements() {
             document.getElementById('urgentAnnouncementTitle').innerText = c.title || '';
             document.getElementById('urgentAnnouncementAuthor').innerText = c.author || '';
             document.getElementById('urgentAnnouncementDate').innerText = new Date(c.date).toLocaleString('es-CO');
-            document.getElementById('urgentAnnouncementBody').innerText = c.content || '';
+            document.getElementById('urgentAnnouncementBody').innerHTML = sanitizeAnnouncementHTML(c.content);
             
             const btn = document.getElementById('btnUrgentUnderstand');
             btn.onclick = () => markUrgentComunicadoAsRead(key);
@@ -5705,7 +5765,7 @@ function viewComunicadoContent(id) {
     document.getElementById('viewComunicadoContentTitle').innerText = c.title || '';
     document.getElementById('viewComunicadoContentAuthor').innerText = c.author || '';
     document.getElementById('viewComunicadoContentDate').innerText = new Date(c.date).toLocaleString('es-CO');
-    document.getElementById('viewComunicadoContentBody').innerText = c.content || '';
+    document.getElementById('viewComunicadoContentBody').innerHTML = sanitizeAnnouncementHTML(c.content);
     
     document.getElementById('viewComunicadoContentModal').classList.add('active');
 }

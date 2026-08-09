@@ -50,6 +50,13 @@ jobs:
           set -o pipefail
           npm run test:shift-close 2>&1 | tee shift-close-output.log
 
+      - name: Run announcement sanitizer smoke test
+        id: announcements
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:announcements 2>&1 | tee announcement-sanitizer-output.log
+
       - name: Run /logs XSS smoke test
         id: xss
         shell: bash
@@ -63,6 +70,7 @@ jobs:
         env:
           EMULATOR_OUTCOME: ${{ steps.emulator.outcome }}
           SHIFT_CLOSE_OUTCOME: ${{ steps.shift_close.outcome }}
+          ANNOUNCEMENTS_OUTCOME: ${{ steps.announcements.outcome }}
           XSS_OUTCOME: ${{ steps.xss.outcome }}
         run: |
           {
@@ -81,6 +89,7 @@ jobs:
               echo "- Outcome: $EMULATOR_OUTCOME"
             fi
             echo "- shift closure smoke: $SHIFT_CLOSE_OUTCOME"
+            echo "- announcement sanitizer smoke: $ANNOUNCEMENTS_OUTCOME"
             echo "- /logs XSS smoke: $XSS_OUTCOME"
             echo
             echo "### Jest output"
@@ -91,6 +100,11 @@ jobs:
             echo "### Shift closure smoke output"
             echo '```text'
             cat shift-close-output.log 2>/dev/null || echo "No shift closure output was produced."
+            echo '```'
+            echo
+            echo "### Announcement sanitizer smoke output"
+            echo '```text'
+            cat announcement-sanitizer-output.log 2>/dev/null || echo "No announcement sanitizer output was produced."
             echo '```'
             echo
             echo "### XSS smoke output"
