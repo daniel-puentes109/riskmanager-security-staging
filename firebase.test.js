@@ -117,6 +117,40 @@ describe('Gestor Context', () => {
     await assertSucceeds(gestorDb.ref('login_logs/log_gestor/logoutTime').set(456));
   });
 
+  it('ALLOW cierre atómico propio de turno', async () => {
+    await assertSucceeds(gestorDb.ref().update({
+      'shift_reports/rep_gestor': {
+        uid: 'gestor_789',
+        gestor: 'Test Gestor',
+        timestamp: 456
+      },
+      'active_sessions/gestor_789': null,
+      'login_logs/log_gestor/logoutTime': 456
+    }));
+  });
+
+  it('DENY cierre atómico que afecte la sesión de otro Gestor', async () => {
+    await assertFails(gestorDb.ref().update({
+      'shift_reports/rep_spoof': {
+        uid: 'gestor_789',
+        gestor: 'Test Gestor',
+        timestamp: 456
+      },
+      'active_sessions/other_gestor': null,
+      'login_logs/log_other/logoutTime': 456
+    }));
+
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.database();
+      const report = await db.ref('shift_reports/rep_spoof').once('value');
+      const otherSession = await db.ref('active_sessions/other_gestor').once('value');
+      const otherLogout = await db.ref('login_logs/log_other/logoutTime').once('value');
+      expect(report.exists()).toBe(false);
+      expect(otherSession.exists()).toBe(true);
+      expect(otherLogout.exists()).toBe(false);
+    });
+  });
+
   it('ALLOW readBy propio cuando corresponda', async () => {
     await assertSucceeds(gestorDb.ref('announcements/ann_1/readBy/gestor_789').set({ readAt: 123 }));
   });

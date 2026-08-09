@@ -22,13 +22,16 @@ jobs:
 
       - name: Print tested candidate hashes
         run: |
+          APP_HASH="$(git hash-object app.js)"
           RULES_HASH="$(git hash-object database.rules.json)"
           TEST_HASH="$(git hash-object firebase.test.js)"
+          echo "APP_JS_TESTED_HASH=${APP_HASH}"
           echo "RULES_TESTED_HASH=${RULES_HASH}"
           echo "FIREBASE_TEST_EXECUTED_HASH=${TEST_HASH}"
           {
             echo "## Candidate hashes"
             echo
+            echo "- APP_JS_TESTED_HASH: \`${APP_HASH}\`"
             echo "- RULES_TESTED_HASH: \`${RULES_HASH}\`"
             echo "- FIREBASE_TEST_EXECUTED_HASH: \`${TEST_HASH}\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -39,6 +42,13 @@ jobs:
         run: |
           set -o pipefail
           npx firebase emulators:exec --project riskmanager-security-test "npm test" 2>&1 | tee firebase-test-output.log
+
+      - name: Run shift closure smoke test
+        id: shift_close
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:shift-close 2>&1 | tee shift-close-output.log
 
       - name: Run /logs XSS smoke test
         id: xss
@@ -52,6 +62,7 @@ jobs:
         shell: bash
         env:
           EMULATOR_OUTCOME: ${{ steps.emulator.outcome }}
+          SHIFT_CLOSE_OUTCOME: ${{ steps.shift_close.outcome }}
           XSS_OUTCOME: ${{ steps.xss.outcome }}
         run: |
           {
@@ -62,17 +73,24 @@ jobs:
               echo "- Previous tests: 19/19 PASS"
               echo "- /permissions tests: 6/6 PASS"
               echo "- /logs tests: 8/8 PASS"
-              echo "- TOTAL: 33"
-              echo "- PASS: 33"
+              echo "- shift closure tests: 2/2 PASS"
+              echo "- TOTAL: 35"
+              echo "- PASS: 35"
               echo "- FAIL: 0"
             else
               echo "- Outcome: $EMULATOR_OUTCOME"
             fi
+            echo "- shift closure smoke: $SHIFT_CLOSE_OUTCOME"
             echo "- /logs XSS smoke: $XSS_OUTCOME"
             echo
             echo "### Jest output"
             echo '```text'
             tail -n 80 firebase-test-output.log 2>/dev/null || echo "No test output was produced."
+            echo '```'
+            echo
+            echo "### Shift closure smoke output"
+            echo '```text'
+            cat shift-close-output.log 2>/dev/null || echo "No shift closure output was produced."
             echo '```'
             echo
             echo "### XSS smoke output"

@@ -2797,7 +2797,23 @@ function toggleLunchBreak() {
     }
 }
 
-function handleEndShift() {
+async function persistShiftClosureCore(reportUid, loginLogId, shiftReportObject) {
+    if (!reportUid) throw new Error('Missing authenticated UID for shift closure');
+    if (!loginLogId) throw new Error('Missing login log ID for shift closure');
+
+    const reportRef = database.ref('shift_reports').push();
+    if (!reportRef.key) throw new Error('Unable to allocate shift report ID');
+
+    const updates = {};
+    updates[`shift_reports/${reportRef.key}`] = shiftReportObject;
+    updates[`active_sessions/${reportUid}`] = null;
+    updates[`login_logs/${loginLogId}/logoutTime`] = firebase.database.ServerValue.TIMESTAMP;
+
+    await database.ref().update(updates);
+    return reportRef.key;
+}
+
+async function handleEndShift() {
     if(confirm("¿Estás seguro que deseas finalizar tu turno actual? Se enviará un resumen al supervisor.")) {
         // Cerrar almuerzo o desayuno si quedó abierto
         if (isLunchBreak) toggleLunchBreak();
@@ -2985,20 +3001,24 @@ function handleEndShift() {
                 timestamp: Date.now()
             };
 
-            // Intentamos guardar en firebase pero no bloqueamos el flujo si hay error
-            database.ref('shift_reports').push(shiftReportObject).catch(e => console.error("Firebase backup failed", e));
-
-            // Eliminar sesión activa de Firebase
-            if (localUser.uid) {
-                database.ref('active_sessions/' + localUser.uid).remove().catch(e => console.error("Error removing active session on shift end:", e));
-            }
-            if (localUser.loginLogId) {
-                database.ref('login_logs/' + localUser.loginLogId).update({
-                    logoutTime: firebase.database.ServerValue.TIMESTAMP
+            // Persistencia central atómica: reporte, cierre de sesión activa y logoutTime.
+            // Si cualquiera falla, no se limpia la sesión local ni se intenta enviar correo.
+            try {
+                await persistShiftClosureCore(reportUid, localUser.loginLogId, shiftReportObject);
+            } catch (coreError) {
+                console.error('CORE_SHIFT_CLOSE_FAILED', {
+                    code: coreError && coreError.code ? coreError.code : 'unknown',
+                    message: coreError && coreError.message ? coreError.message : 'unknown'
                 });
+                if (btn) {
+                    btn.innerHTML = prevHtml;
+                    btn.disabled = false;
+                }
+                alert('No fue posible finalizar el turno porque el reporte o el cierre de sesión no quedó guardado. Intenta nuevamente.');
+                return;
             }
 
-            // Antes de enviar, limpiamos la sesión y el caché
+            // El cierre central ya quedó persistido; ahora se limpia la sesión local.
             localStorage.removeItem('riskOps_currentUser');
             localStorage.removeItem('riskOps_cache');
             localStorage.removeItem('riskOps_breakState');
@@ -3006,25 +3026,45 @@ function handleEndShift() {
             
             // Set the global currentUser to null so syncActiveSessionToFirebase stops firing
             currentUser = null;
-            
-            firebase.auth().signOut().catch(err => console.error(err));
-            
-            // Enviar de forma silenciosa para que un error 522 de Cloudflare no bloquee la pantalla
-            fetch('https://formsubmit.co/ajax/maria.sanchez@virtualsoft.tech', {
-                method: 'POST',
-                body: formData,
-                headers: { 'Accept': 'application/json' }
-            }).then(response => {
-                if(response.ok) {
-                    alert('Turno finalizado y reporte enviado al supervisor.');
-                } else {
-                    alert('Turno finalizado localmente. Nota: El servidor de correos está inactivo temporalmente.');
-                }
-            }).catch(err => {
-                alert('Turno finalizado. (Error de red al intentar enviar el correo).');
-            }).finally(() => {
+
+            try {
+                await firebase.auth().signOut();
+            } catch (signOutError) {
+                console.error('SHIFT_SIGNOUT_FAILED', {
+                    code: signOutError && signOutError.code ? signOutError.code : 'unknown',
+                    message: signOutError && signOutError.message ? signOutError.message : 'unknown'
+                });
+                alert('El turno quedó guardado, pero no fue posible cerrar la autenticación. Recarga la página antes de volver a ingresar.');
                 window.location.href = 'login.html';
-            });
+                return;
+            }
+
+            // El correo es una notificación best-effort y nunca revierte el cierre persistido.
+            let emailSent = false;
+            let emailStatus = null;
+            let emailErrorMessage = null;
+            try {
+                const emailResponse = await fetch('https://formsubmit.co/ajax/maria.sanchez@virtualsoft.tech', {
+                    method: 'POST',
+                    body: formData,
+                    headers: { 'Accept': 'application/json' }
+                });
+                emailStatus = emailResponse.status;
+                emailSent = emailResponse.ok;
+            } catch (emailError) {
+                emailErrorMessage = emailError && emailError.message ? emailError.message : 'network error';
+            }
+
+            if (emailSent) {
+                alert('Turno finalizado correctamente y reporte enviado al supervisor.');
+            } else {
+                console.warn('EMAIL_NOTIFICATION_FAILED', {
+                    status: emailStatus,
+                    message: emailErrorMessage
+                });
+                alert('Turno finalizado correctamente. No fue posible enviar la notificación por correo.');
+            }
+            window.location.href = 'login.html';
         } else {
             alert("Turno finalizado.");
             if (localUser && localUser.loginLogId) {
