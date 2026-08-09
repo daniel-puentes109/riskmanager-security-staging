@@ -4,7 +4,6 @@ const { readFileSync } = require('fs');
 let testEnv;
 
 beforeAll(async () => {
-  // Load rules from the same directory
   const rules = readFileSync('database.rules.json', 'utf8');
 
   testEnv = await initializeTestEnvironment({
@@ -20,7 +19,6 @@ beforeAll(async () => {
 beforeEach(async () => {
   await testEnv.clearDatabase();
 
-  // Setup initial mock data as an admin
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.database();
     await db.ref('/').set({
@@ -37,10 +35,12 @@ beforeEach(async () => {
         'perm_other': { uid: 'other_gestor', status: 'Pendiente' }
       },
       login_logs: {
-        'log_other': { uid: 'other_gestor', loginTime: 100 }
+        'log_other': { uid: 'other_gestor', loginTime: 100 },
+        'log_gestor': { uid: 'gestor_789', loginTime: 123 }
       },
       active_sessions: {
-        'other_gestor': { status: 'Activo' }
+        'other_gestor': { status: 'Activo' },
+        'gestor_789': { status: 'Activo' }
       },
       announcements: {
         'ann_1': { author: 'admin_123', readBy: {} }
@@ -55,7 +55,7 @@ afterAll(async () => {
 
 // A. Unauthenticated
 describe('Unauthenticated User', () => {
-  it('DENY recursos protegidos (users)', async () => {
+  it('DENY recursos protegidos', async () => {
     const unauthDb = testEnv.unauthenticatedContext().database();
     await assertFails(unauthDb.ref('users').once('value'));
   });
@@ -80,7 +80,7 @@ describe('Gestor Context', () => {
     await assertFails(gestorDb.ref('users/gestor_789').update({ approved: true }));
   });
 
-  it('DENY leer perfil protegido de otro UID (admin)', async () => {
+  it('DENY leer perfil protegido de otro UID', async () => {
     await assertFails(gestorDb.ref('users/admin_123').once('value'));
   });
 
@@ -108,23 +108,15 @@ describe('Gestor Context', () => {
     await assertFails(gestorDb.ref('announcements/ann_1/readBy/other_gestor').set({ readAt: 123 }));
   });
 
-  it('ALLOW operaciones propias autorizadas (actualizar su status)', async () => {
+  it('ALLOW operaciones propias autorizadas', async () => {
     await assertSucceeds(gestorDb.ref('users/gestor_789/status').set('Inactivo'));
   });
 
-  it('ALLOW logoutTime propio', async () => {
-    // Gestor can write to own login_log's logoutTime
+  it('ALLOW logoutTime propio según reglas previstas', async () => {
     await assertSucceeds(gestorDb.ref('login_logs/log_gestor/logoutTime').set(456));
-    // Verify wait, first we must create it properly if needed, but the rule says !newData.exists() || newData.isNumber(), and uid matches.
-    // However, the rule requires `auth.uid === $log_id` for active_sessions. For login_logs, it checks `root.child('login_logs').child($log_id).child('uid').val() === auth.uid`.
-    // Let\'s set up the own log first as admin
-    await testEnv.withSecurityRulesDisabled(async (ctx) => {
-      await ctx.database().ref('login_logs/log_own').set({ uid: 'gestor_789', loginTime: 123 });
-    });
-    await assertSucceeds(gestorDb.ref('login_logs/log_own/logoutTime').set(456));
   });
 
-  it('ALLOW readBy propio', async () => {
+  it('ALLOW readBy propio cuando corresponda', async () => {
     await assertSucceeds(gestorDb.ref('announcements/ann_1/readBy/gestor_789').set({ readAt: 123 }));
   });
 });
@@ -136,7 +128,7 @@ describe('Supervisor Context', () => {
     supDb = testEnv.authenticatedContext('sup_456').database();
   });
 
-  it('ALLOW leer perfiles ajenos', async () => {
+  it('ALLOW operaciones de supervisión previstas', async () => {
     await assertSucceeds(supDb.ref('users/gestor_789').once('value'));
   });
 
@@ -144,7 +136,7 @@ describe('Supervisor Context', () => {
     await assertSucceeds(supDb.ref('permissions/perm_other').update({ status: 'Aprobado' }));
   });
 
-  it('DENY crear usuarios directos (reservado a Admin)', async () => {
+  it('DENY operaciones exclusivas de Admin', async () => {
     await assertFails(supDb.ref('users/new_gestor').set({ role: 'Gestor' }));
   });
 });
@@ -160,7 +152,7 @@ describe('Admin Context', () => {
     await assertSucceeds(adminDb.ref('announcements/ann_new').set({ author: 'admin_123', text: 'hello' }));
   });
 
-  it('ALLOW gestión autorizada de usuarios', async () => {
+  it('ALLOW gestión autorizada de usuarios/permisos', async () => {
     await assertSucceeds(adminDb.ref('users/new_user').set({ role: 'Gestor', approved: true }));
   });
 });
