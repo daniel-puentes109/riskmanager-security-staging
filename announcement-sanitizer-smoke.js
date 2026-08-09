@@ -4,7 +4,11 @@ const path = require('path');
 const vm = require('vm');
 const { parseHTML } = require('linkedom');
 
-const appPath = path.resolve(__dirname, '..', '..', 'app.js');
+const appPath = [
+  path.resolve(__dirname, 'app.js'),
+  path.resolve(__dirname, '..', '..', 'app.js')
+].find(candidate => fs.existsSync(candidate));
+assert(appPath, 'app.js was not found next to the smoke test or at the source repository root');
 const appSource = fs.readFileSync(appPath, 'utf8');
 const sanitizerStart = appSource.indexOf('const ANNOUNCEMENT_ALLOWED_TAGS');
 const sanitizerEnd = appSource.indexOf('// Auth Check');
