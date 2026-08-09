@@ -2321,7 +2321,9 @@ async function initApp() {
             const headerShiftBadgeAdmin = document.querySelector('.shift-badge');
             if (headerShiftBadgeAdmin) headerShiftBadgeAdmin.style.display = 'none';
 
-            renderPendingUsers();
+            if (currentUser.role === 'Admin') {
+                renderPendingUsers();
+            }
             
             const notifList = document.getElementById('notificationList');
             const notifCount = document.getElementById('notificationCount');
@@ -2526,7 +2528,9 @@ async function initApp() {
                 renderShiftReports();
             } else if (item.id === 'navAprobaciones') {
                 document.getElementById('view-aprobaciones').style.display = 'block';
-                renderPendingUsers();
+                if (currentUser && currentUser.role === 'Admin') {
+                    renderPendingUsers();
+                }
                 renderPendingPermissions();
             } else if (item.id === 'navMonitoreo') {
                 const viewMonitoreo = document.getElementById('view-monitoreo');
@@ -4086,6 +4090,24 @@ async function changePassword() {
 
 // --- PROGRAMMATIC SIDEBAR ORDER & MONITOREO REALTIME ---
 
+function alignAdministrativeControlsByRole() {
+    if (!currentUser) return;
+
+    const isAdmin = currentUser.role === 'Admin';
+    const pendingUsersBody = document.getElementById('pendingUsersTableBody');
+    const userTablePanel = pendingUsersBody ? pendingUsersBody.closest('.glass-panel') : null;
+    const userSearch = document.getElementById('filterAprobacionesSearch');
+    const userFilterPanel = userSearch ? userSearch.closest('.glass-panel') : null;
+    const userSectionTitle = userFilterPanel ? userFilterPanel.previousElementSibling : null;
+
+    [userSectionTitle, userFilterPanel, userTablePanel].forEach(element => {
+        if (element) element.style.display = isAdmin ? '' : 'none';
+    });
+
+    const adminAnnouncementsView = document.getElementById('view-gestion-comunicados');
+    if (adminAnnouncementsView && !isAdmin) adminAnnouncementsView.style.display = 'none';
+}
+
 function setupSidebar() {
     const sidebarNav = document.querySelector('.sidebar-nav');
     if (!sidebarNav) return;
@@ -4157,13 +4179,27 @@ function setupSidebar() {
         if (tFilter) tFilter.style.display = 'flex';
 
         if (navWorkspace) { navWorkspace.style.display = 'none'; } // HIDE Mis Tareas for Admin and Supervisor
-        if (navComunicados) { navComunicados.style.display = 'none'; }
+        if (navComunicados) {
+            if (currentUser.role === 'Supervisor') {
+                navComunicados.style.display = 'flex';
+                sidebarNav.appendChild(navComunicados);
+            } else {
+                navComunicados.style.display = 'none';
+            }
+        }
 
         if (adminNavGroup) { adminNavGroup.style.display = 'block'; sidebarNav.appendChild(adminNavGroup); }
         if (navMonitoreo) { navMonitoreo.style.display = 'flex'; adminNavGroup.appendChild(navMonitoreo); }
 
         if (navTiempos) { navTiempos.style.display = 'none'; }
-        if (navAdminComunicados) { navAdminComunicados.style.display = 'flex'; adminNavGroup.appendChild(navAdminComunicados); }
+        if (navAdminComunicados) {
+            if (currentUser.role === 'Admin') {
+                navAdminComunicados.style.display = 'flex';
+                adminNavGroup.appendChild(navAdminComunicados);
+            } else {
+                navAdminComunicados.style.display = 'none';
+            }
+        }
         if (navTurnos) { navTurnos.style.display = 'flex'; adminNavGroup.appendChild(navTurnos); }
         if (navAprobaciones) { navAprobaciones.style.display = 'flex'; adminNavGroup.appendChild(navAprobaciones); }
         
@@ -4201,6 +4237,8 @@ function setupSidebar() {
             toggleBreakfastBtn.style.display = 'flex';
         }
     }
+
+    alignAdministrativeControlsByRole();
 }
 
 let allActiveSessions = {};
