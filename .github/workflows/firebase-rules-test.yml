@@ -22,18 +22,24 @@ jobs:
 
       - name: Print tested candidate hashes
         run: |
+          SOURCE_CANDIDATE_COMMIT="cb6eade8d924dcd3ea597d5de13c3d8c5a1c3c07"
           APP_HASH="$(git hash-object app.js)"
           RULES_HASH="$(git hash-object database.rules.json)"
           TEST_HASH="$(git hash-object firebase.test.js)"
+          PAGES_WORKFLOW_HASH="$(git hash-object .github/workflows/deploy-pages.yml)"
+          echo "SOURCE_CANDIDATE_COMMIT=${SOURCE_CANDIDATE_COMMIT}"
           echo "APP_JS_TESTED_HASH=${APP_HASH}"
           echo "RULES_TESTED_HASH=${RULES_HASH}"
           echo "FIREBASE_TEST_EXECUTED_HASH=${TEST_HASH}"
+          echo "PAGES_WORKFLOW_TESTED_HASH=${PAGES_WORKFLOW_HASH}"
           {
             echo "## Candidate hashes"
             echo
+            echo "- SOURCE_CANDIDATE_COMMIT: \`${SOURCE_CANDIDATE_COMMIT}\`"
             echo "- APP_JS_TESTED_HASH: \`${APP_HASH}\`"
             echo "- RULES_TESTED_HASH: \`${RULES_HASH}\`"
             echo "- FIREBASE_TEST_EXECUTED_HASH: \`${TEST_HASH}\`"
+            echo "- PAGES_WORKFLOW_TESTED_HASH: \`${PAGES_WORKFLOW_HASH}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run Firebase Emulator Tests

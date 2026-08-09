@@ -1,0 +1,187 @@
+name: Deploy GitHub Pages Artifact
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source repository
+        uses: actions/checkout@v4
+
+      - name: Build strict public artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site
+
+          ALLOWED_ROOT_FILES=(
+            "index.html"
+            "login.html"
+            "app.js"
+            "login.js"
+            "styles.css"
+            "login.css"
+            "firebase-config.js"
+            "CNAME"
+            ".nojekyll"
+            "procesos_list.json"
+            "kpi_operativos_v2.json"
+          )
+
+          for file in "${ALLOWED_ROOT_FILES[@]}"; do
+            [ -f "$file" ] && cp "$file" _site/
+          done
+
+          [ -d js ] && cp -r js _site/
+          [ -d assets ] && cp -r assets _site/
+
+          mkdir -p _site/Procesos
+          [ -f "Procesos/Manual_Usuario_Penka.html" ] && \
+            cp "Procesos/Manual_Usuario_Penka.html" _site/Procesos/
+
+          if [ -f "Retiros/retiros_data.json" ]; then
+            mkdir -p _site/Retiros
+            cp "Retiros/retiros_data.json" _site/Retiros/
+          fi
+
+          # XLSX operativos aceptados de forma explícita para Fase 1.
+          # No usar globs: cualquier archivo nuevo requiere revisión y cambio de allowlist.
+          ALLOWED_OPERATIONAL_XLSX=(
+            "Tareas Riesgo/Tareas de Riesgo.xlsx"
+            "Cronograma de Tareas/Cronograma Mayo.xlsx"
+            "Cronograma de Tareas/Cronograma Junio.xlsx"
+            "Cronograma de Tareas/Cronograma Julio.xlsx"
+            "Cronograma de Tareas/Cronograma Agosto.xlsx"
+            "Horario/Horario 2026.xlsx"
+            "Teletrabajo/Teletrabajo.xlsx"
+          )
+
+          for file in "${ALLOWED_OPERATIONAL_XLSX[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "::error::Falta XLSX operativo requerido: $file"
+              exit 1
+            fi
+            mkdir -p "_site/$(dirname "$file")"
+            cp "$file" "_site/$file"
+          done
+
+          python3 - <<'PY'
+          import os
+          import sys
+
+          allowed = {
+              "index.html",
+              "login.html",
+              "app.js",
+              "login.js",
+              "styles.css",
+              "login.css",
+              "firebase-config.js",
+              "CNAME",
+              ".nojekyll",
+              "procesos_list.json",
+              "kpi_operativos_v2.json",
+              "Procesos/Manual_Usuario_Penka.html",
+              "Retiros/retiros_data.json",
+              "js/tiempos.js",
+              "Tareas Riesgo/Tareas de Riesgo.xlsx",
+              "Cronograma de Tareas/Cronograma Mayo.xlsx",
+              "Cronograma de Tareas/Cronograma Junio.xlsx",
+              "Cronograma de Tareas/Cronograma Julio.xlsx",
+              "Cronograma de Tareas/Cronograma Agosto.xlsx",
+              "Horario/Horario 2026.xlsx",
+              "Teletrabajo/Teletrabajo.xlsx",
+          }
+          forbidden_names = {
+              "database.rules.json",
+              "firebase.json",
+              "firebase.test.js",
+              "package.json",
+              "package-lock.json",
+          }
+          forbidden_parts = {
+              ".git",
+              ".github",
+              "scratch",
+              "tests",
+              "node_modules",
+              "__pycache__",
+          }
+          unauthorized = []
+          forbidden = []
+
+          for root, _, files in os.walk("_site"):
+              for filename in files:
+                  rel = os.path.relpath(os.path.join(root, filename), "_site")
+                  normalized = rel.replace("\\", "/")
+                  parts = set(normalized.split("/"))
+                  lower_name = filename.lower()
+
+                  if (
+                      filename in forbidden_names
+                      or parts.intersection(forbidden_parts)
+                      or lower_name.endswith(
+                          (".pdf", ".raw", ".pyc", ".p12", ".pfx", ".pem", ".key")
+                      )
+                      or lower_name.startswith(("temp_", "dump_"))
+                  ):
+                      forbidden.append(normalized)
+
+                  if normalized.startswith("assets/"):
+                      continue
+                  if normalized not in allowed:
+                      unauthorized.append(normalized)
+
+          if forbidden:
+              print("ERROR: archivos privados o de infraestructura:", forbidden)
+              sys.exit(1)
+          if unauthorized:
+              print("ERROR: archivos no autorizados:", unauthorized)
+              sys.exit(1)
+
+          print("Allowlist validada: 0 archivos privados o no autorizados.")
+          PY
+
+      - name: Record public artifact hashes
+        shell: bash
+        run: |
+          {
+            echo "## Public artifact hashes"
+            echo
+            sha256sum \
+              _site/app.js \
+              "_site/Tareas Riesgo/Tareas de Riesgo.xlsx" \
+              "_site/Cronograma de Tareas/Cronograma Mayo.xlsx" \
+              "_site/Cronograma de Tareas/Cronograma Junio.xlsx" \
+              "_site/Cronograma de Tareas/Cronograma Julio.xlsx" \
+              "_site/Cronograma de Tareas/Cronograma Agosto.xlsx" \
+              "_site/Horario/Horario 2026.xlsx" \
+              "_site/Teletrabajo/Teletrabajo.xlsx"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
