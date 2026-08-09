@@ -1170,7 +1170,7 @@ async function loadExcelTasks() {
             select.innerHTML = '<option value="" disabled selected>Selecciona tu SET a trabajar...</option><option value="Todos">Mostrar Todos</option>';
             const setsKeys = Object.keys(tasksBySet).sort();
             setsKeys.forEach(set => {
-                select.innerHTML += `<option value="${set}">${set}</option>`;
+                select.innerHTML += `<option value="${escapeHTML(set)}">${escapeHTML(set)}</option>`;
             });
             
             // Clone select to remove old event listeners
@@ -1364,7 +1364,7 @@ async function loadSchedule() {
                     const dayName = dayRow[i] || `Día ${i}`;
                     const dateParsed = formatExcelDate(dateRow[i]);
                     const subText = dateParsed ? `<br><span style="font-size: 11px; font-weight: normal; color: var(--text-secondary);">${dateParsed}</span>` : '';
-                    headHTML += `<th style="padding: 12px; color: var(--accent-primary); text-align: center;">${dayName}${subText}</th>`;
+                    headHTML += `<th style="padding: 12px; color: var(--accent-primary); text-align: center;">${escapeHTML(String(dayName))}${subText}</th>`;
                 }
                 headHTML += '</tr>';
                 tableHead.innerHTML = headHTML;
@@ -1387,7 +1387,7 @@ async function loadSchedule() {
                     let bgClass = isCurrentUser ? 'rgba(59,130,246,0.1)' : 'transparent';
                     
                     let trHTML = `<tr class="hover-highlight" style="border-bottom: 1px solid var(--glass-border); background: ${bgClass};">`;
-                    trHTML += `<td style="padding: 12px; font-weight: 600; text-align: left; color: ${isCurrentUser ? 'var(--accent-primary)' : 'var(--text-primary)'}; position: sticky; left: 0; background: ${isCurrentUser ? 'var(--bg-dark)' : 'var(--bg-panel)'}; z-index: 1;">${gestorName}</td>`;
+                    trHTML += `<td style="padding: 12px; font-weight: 600; text-align: left; color: ${isCurrentUser ? 'var(--accent-primary)' : 'var(--text-primary)'}; position: sticky; left: 0; background: ${isCurrentUser ? 'var(--bg-dark)' : 'var(--bg-panel)'}; z-index: 1;">${escapeHTML(gestorName)}</td>`;
                     
                     // Encontrar el turno para mostrar en el badge principal (corresponde a hoy)
                     let badgeShift = getShiftForDate(rows, allScheduleBlocks, gestorName, new Date());
@@ -1402,7 +1402,7 @@ async function loadSchedule() {
                         else if(sLower.includes('descansa')) badgeClass = 'descanso-badge';
                         else if(sLower.includes('familia')) badgeClass = 'familia-badge';
                         
-                        trHTML += `<td style="padding: 12px; text-align: center; white-space: nowrap;"><span class="badge ${badgeClass}">${shift}</span></td>`;
+                        trHTML += `<td style="padding: 12px; text-align: center; white-space: nowrap;"><span class="badge ${badgeClass}">${escapeHTML(String(shift))}</span></td>`;
                     }
                     
                     if (isCurrentUser && badgeShift) {
@@ -1537,8 +1537,8 @@ function loadTeletrabajo() {
                     
                     tableBody.innerHTML += `
                         <tr class="hover-highlight" style="border-bottom: 1px solid var(--glass-border); background: ${bgClass};">
-                            <td style="padding: 12px; font-weight: 600; text-align: left; color: ${isCurrentUser ? 'var(--accent-primary)' : 'var(--text-primary)'}; position: sticky; left: 0; background: ${isCurrentUser ? 'var(--bg-dark)' : 'var(--bg-panel)'}; z-index: 1;">${row.gestor}</td>
-                            <td style="padding: 12px; text-align: center;">${isTeletrabajo ? row.dia : '-'}</td>
+                            <td style="padding: 12px; font-weight: 600; text-align: left; color: ${isCurrentUser ? 'var(--accent-primary)' : 'var(--text-primary)'}; position: sticky; left: 0; background: ${isCurrentUser ? 'var(--bg-dark)' : 'var(--bg-panel)'}; z-index: 1;">${escapeHTML(row.gestor)}</td>
+                            <td style="padding: 12px; text-align: center;">${isTeletrabajo ? escapeHTML(row.dia) : '-'}</td>
                             <td style="padding: 12px; text-align: center;">${estadoHtml}</td>
                         </tr>
                     `;
@@ -1557,7 +1557,13 @@ let allLoadedPermissions = [];
 // Cargar Histórico de Permisos desde Firebase
 async function loadPermisos() {
     try {
-        const snapshot = await database.ref('permissions').once('value');
+        let permissionsRef = database.ref('permissions');
+        if (currentUser && currentUser.role !== 'Admin' && currentUser.role !== 'Supervisor') {
+            const authUid = currentUser.uid || (firebase.auth().currentUser && firebase.auth().currentUser.uid);
+            if (!authUid) throw new Error('No se pudo determinar el UID del usuario autenticado');
+            permissionsRef = permissionsRef.orderByChild('uid').equalTo(authUid);
+        }
+        const snapshot = await permissionsRef.once('value');
         const historicoContainer = document.getElementById('historicoPermisosList');
         if(!historicoContainer) return;
         
@@ -1739,7 +1745,7 @@ function renderTree(tasksBySet) {
         setDiv.innerHTML = `
             <div class="${headerClass}" onclick="toggleTree(this)">
                 <i class='bx bx-chevron-right'></i>
-                <span>${set}</span>
+                <span>${escapeHTML(set)}</span>
                 <span class="badge pending">${total} Tareas</span>
             </div>
             <div class="${childrenClass}">
@@ -1753,7 +1759,7 @@ function renderTree(tasksBySet) {
                     }
                     return `
                     <div class="task-item" onclick="selectTask(${task.id})">
-                        <i class='bx bx-file-blank'></i> ${task.name}
+                        <i class='bx bx-file-blank'></i> ${escapeHTML(task.name)}
                         <div class="task-status ${statusClass}"></div>
                     </div>
                     `;
@@ -2279,7 +2285,7 @@ async function initApp() {
                                 <i class='bx bx-time' style="color: var(--warning); font-size: 18px; margin-top: 2px;"></i>
                                 <div style="flex-grow: 1;">
                                     <div style="font-size: 12px; font-weight: 500; color: var(--text-primary);">Nuevo Permiso Solicitado</div>
-                                    <div style="font-size: 11px; color: var(--text-secondary);">${p.gestor} - ${p.tipo}</div>
+                                    <div style="font-size: 11px; color: var(--text-secondary);">${escapeHTML(p.gestor)} - ${escapeHTML(p.tipo)}</div>
                                 </div>
                             </div>
                         `;
@@ -2305,7 +2311,9 @@ async function initApp() {
             const notifList = document.getElementById('notificationList');
             const notifCount = document.getElementById('notificationCount');
 
-            database.ref('permissions').orderByChild('gestor').equalTo(currentUser.name).on('value', (snapshot) => {
+            const authUid = currentUser.uid || (firebase.auth().currentUser && firebase.auth().currentUser.uid);
+            if (!authUid) return;
+            database.ref('permissions').orderByChild('uid').equalTo(authUid).on('value', (snapshot) => {
                 let unreadCount = 0;
                 let notifsHtml = '';
                 
@@ -2321,14 +2329,14 @@ async function initApp() {
                         let bg = p.notified === false ? 'rgba(59,130,246,0.1)' : 'transparent';
                         let iconColor = p.status === 'Aprobado' ? 'var(--success)' : 'var(--danger)';
                         let icon = p.status === 'Aprobado' ? 'bx-check-double' : 'bx-x';
-                        let reasonHtml = p.rejectionReason ? `<div style="font-size:11px; color:var(--danger); margin-top:2px;">Razón: ${p.rejectionReason}</div>` : '';
+                        let reasonHtml = p.rejectionReason ? `<div style="font-size:11px; color:var(--danger); margin-top:2px;">Razón: ${escapeHTML(p.rejectionReason)}</div>` : '';
                         
                         notifsHtml += `
                             <div style="background: ${bg}; padding: 10px; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); display: flex; gap: 10px; align-items: start; cursor: pointer; transition: background 0.2s;" onclick="document.getElementById('navPermisos').click(); document.getElementById('notificationDropdown').style.display = 'none';">
                                 <i class='bx ${icon}' style="color: ${iconColor}; font-size: 18px; margin-top: 2px;"></i>
                                 <div style="flex-grow: 1;">
-                                    <div style="font-size: 12px; font-weight: 500; color: var(--text-primary);">Permiso ${p.status}</div>
-                                    <div style="font-size: 11px; color: var(--text-secondary);">${p.fecha} (${p.horaInicio} a ${p.horaFin})</div>
+                                    <div style="font-size: 12px; font-weight: 500; color: var(--text-primary);">Permiso ${escapeHTML(p.status)}</div>
+                                    <div style="font-size: 11px; color: var(--text-secondary);">${escapeHTML(p.fecha)} (${escapeHTML(p.horaInicio)} a ${escapeHTML(p.horaFin)})</div>
                                     ${reasonHtml}
                                 </div>
                             </div>
@@ -3882,7 +3890,9 @@ async function markAllAsRead() {
                 }
             }
         } else {
-            const snapshot = await database.ref('permissions').orderByChild('gestor').equalTo(currentUser.name).once('value');
+            const authUid = currentUser.uid || (firebase.auth().currentUser && firebase.auth().currentUser.uid);
+            if (!authUid) return;
+            const snapshot = await database.ref('permissions').orderByChild('uid').equalTo(authUid).once('value');
             if (snapshot.exists()) {
                 const data = snapshot.val();
                 const updates = {};
@@ -4325,7 +4335,7 @@ function renderActiveSessionsDashboard() {
                     textStyle = "color: var(--danger); text-decoration: line-through;";
                 }
 
-                tasksHtml += `<div style="display: flex; align-items: center; gap: 5px; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: ${t.status==='Pendiente'?0.7:1};">${icon} <span title="${t.name}" style="${textStyle}">${t.name}</span></div>`;
+                tasksHtml += `<div style="display: flex; align-items: center; gap: 5px; margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: ${t.status==='Pendiente'?0.7:1};">${icon} <span title="${escapeHTML(t.name)}" style="${textStyle}">${escapeHTML(t.name)}</span></div>`;
             });
             tasksHtml += '</div>';
         } else {
@@ -4340,8 +4350,8 @@ function renderActiveSessionsDashboard() {
                 <div class="monitoreo-user-info">
                     <img src="${avatarSrc}" alt="${fullName}" class="monitoreo-avatar" onerror="this.onerror=null; this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=0D8ABC&color=fff';">
                     <div class="monitoreo-details">
-                        <span class="monitoreo-name">${fullName}</span>
-                        <span class="monitoreo-meta">${session.email || ''}</span>
+                        <span class="monitoreo-name">${escapeHTML(fullName)}</span>
+                        <span class="monitoreo-meta">${escapeHTML(session.email || '')}</span>
                     </div>
                 </div>
                 <div class="status-indicator-badge ${isOnline ? 'status-online' : 'status-offline'}">
@@ -4353,7 +4363,7 @@ function renderActiveSessionsDashboard() {
             <div style="margin-top: 10px; font-size: 13px;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
                     <span style="color: var(--text-secondary);"><i class='bx bx-calendar-check'></i> Turno:</span>
-                    <strong style="color: var(--text-primary);">${session.shift || 'Mañana'}</strong>
+                    <strong style="color: var(--text-primary);">${escapeHTML(session.shift || 'Mañana')}</strong>
                 </div>
                 <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
                     <span style="color: var(--text-secondary);"><i class='bx bx-time'></i> Inicio de Turno:</span>
@@ -4890,7 +4900,7 @@ async function calcularIndicadores() {
                 let bgLight = ev.type === 'Desayuno' ? "var(--warning-bg)" : (ev.type === 'Almuerzo' ? "var(--success-bg)" : "var(--danger-bg)");
                 
                 html += `<div style="display: flex; justify-content: space-between; align-items: center; background: var(--bg-primary); padding: 12px 16px; border-radius: 10px; border-left: 4px solid ${color}; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">`;
-                html += `<div style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 13px; color: var(--text-primary);"><div style="background: ${bgLight}; color: ${color}; width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 16px;">${icon}</div> ${ev.type}</div>`;
+                html += `<div style="display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 13px; color: var(--text-primary);"><div style="background: ${bgLight}; color: ${color}; width: 28px; height: 28px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 16px;">${icon}</div> ${escapeHTML(String(ev.type))}</div>`;
                 html += `<div style="font-family: monospace; font-size: 12px; color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--glass-border); padding: 5px 12px; border-radius: 8px; font-weight: 500;"><i class='bx bx-time' style="color: var(--text-secondary);"></i> ${s} - ${eTime}</div>`;
                 html += `</div>`;
             });
@@ -4905,7 +4915,7 @@ async function calcularIndicadores() {
                         uniqueLines.push(line);
                     }
                 });
-                html += `<div style="font-family: monospace; font-size: 13px; color: var(--text-secondary); white-space: pre-wrap; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 15px; border-radius: 10px;">${uniqueLines.join('\n')}</div>`;
+                html += `<div style="font-family: monospace; font-size: 13px; color: var(--text-secondary); white-space: pre-wrap; background: var(--bg-primary); border: 1px solid var(--glass-border); padding: 15px; border-radius: 10px;">${escapeHTML(uniqueLines.join('\n'))}</div>`;
             }
         } else {
             html += `<div style="text-align: center; padding: 20px; color: var(--text-secondary); font-size: 13px; background: var(--bg-primary); border-radius: 10px; border: 1px dashed var(--glass-border);"><i class='bx bx-info-circle' style="font-size: 18px; display: block; margin-bottom: 5px; opacity: 0.5;"></i> No se registraron pausas en este turno</div>`;
@@ -5937,9 +5947,9 @@ function generarAnalisisTextual() {
         
         if (sortedByVol.length > 0) {
             html += `<h4>🏆 Liderazgo en Volumen</h4>`;
-            html += `<p>El gestor con mayor carga operativa es <strong>${sortedByVol[0][0]}</strong> con ${sortedByVol[0][1].procesados} procesados.`;
+            html += `<p>El gestor con mayor carga operativa es <strong>${escapeHTML(sortedByVol[0][0])}</strong> con ${sortedByVol[0][1].procesados} procesados.`;
             if (sortedByVol.length > 1) {
-                html += ` Le sigue <strong>${sortedByVol[1][0]}</strong> con ${sortedByVol[1][1].procesados}.</p>`;
+                html += ` Le sigue <strong>${escapeHTML(sortedByVol[1][0])}</strong> con ${sortedByVol[1][1].procesados}.</p>`;
             } else {
                 html += `</p>`;
             }
@@ -5947,9 +5957,9 @@ function generarAnalisisTextual() {
 
         if (sortedByART.length > 0) {
             html += `<h4>⚡ Rendimiento en Velocidad (ART)</h4>`;
-            html += `<p>El gestor más ágil en resolución es <strong>${sortedByART[0][0]}</strong> con un tiempo promedio de <strong>${sortedByART[0][1].artPromedio.toFixed(2)} minutos</strong>.`;
+            html += `<p>El gestor más ágil en resolución es <strong>${escapeHTML(sortedByART[0][0])}</strong> con un tiempo promedio de <strong>${sortedByART[0][1].artPromedio.toFixed(2)} minutos</strong>.`;
             if (sortedByART.length > 1) {
-                html += ` En segundo lugar destaca <strong>${sortedByART[1][0]}</strong> con ${sortedByART[1][1].artPromedio.toFixed(2)} mins.</p>`;
+                html += ` En segundo lugar destaca <strong>${escapeHTML(sortedByART[1][0])}</strong> con ${sortedByART[1][1].artPromedio.toFixed(2)} mins.</p>`;
             } else {
                 html += `</p>`;
             }
@@ -5957,7 +5967,7 @@ function generarAnalisisTextual() {
             const slowest = sortedByART[sortedByART.length - 1];
             if (slowest[1].artPromedio > 1200) {
                 html += `<div style="background: rgba(239, 68, 68, 0.1); border-left: 4px solid var(--danger); padding: 15px; margin-top: 15px;">
-                    <strong>⚠️ Cuello de Botella Detectado:</strong> <strong>${slowest[0]}</strong> registra un tiempo promedio elevado (${slowest[1].artPromedio.toFixed(2)} min). Se recomienda una intervención para revisar bloqueos operativos o desbalance de cargas.
+                    <strong>⚠️ Cuello de Botella Detectado:</strong> <strong>${escapeHTML(slowest[0])}</strong> registra un tiempo promedio elevado (${slowest[1].artPromedio.toFixed(2)} min). Se recomienda una intervención para revisar bloqueos operativos o desbalance de cargas.
                 </div>`;
             }
         }
@@ -6440,7 +6450,7 @@ function renderControlOperativoFiltered() {
         const badgeRechazados = `<span style="background: rgba(239, 68, 68, 0.15); color: var(--danger); padding: 4px 10px; border-radius: 20px; font-weight: 700;">${d.Retiros_Rechazados}</span>`;
         
         tr.innerHTML = `
-            <td style="padding: 16px 20px; font-weight: 600; color: var(--text-primary);">${gestor}</td>
+            <td style="padding: 16px 20px; font-weight: 600; color: var(--text-primary);">${escapeHTML(gestor)}</td>
             <td style="padding: 16px 20px;">${badgeAprobados}</td>
             <td style="padding: 16px 20px;">${badgeRechazados}</td>
             <td style="padding: 16px 20px; font-weight: 600; color: var(--text-secondary);">${d.Retiros_Procesados}</td>
@@ -7304,7 +7314,7 @@ function renderLoginHistoryTable(records) {
             }
         }
 
-        let statusBadge = `<span style="background: rgba(59,130,246,0.15); color: var(--accent-primary); padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">${r.status}</span>`;
+        let statusBadge = `<span style="background: rgba(59,130,246,0.15); color: var(--accent-primary); padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">${escapeHTML(r.status)}</span>`;
         if (r.isOnline) {
             statusBadge = `<span style="background: rgba(16,185,129,0.15); color: var(--success); padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700;"><i class='bx bx-radio-circle-marked'></i> En Línea</span>`;
         } else if (r.status === 'Ingreso en Día de Descanso') {
@@ -7314,15 +7324,15 @@ function renderLoginHistoryTable(records) {
         html += `
             <tr style="border-bottom: 1px solid rgba(0,0,0,0.05);">
                 <td style="padding: 12px 16px; font-weight: 600; color: var(--text-primary);">
-                    ${r.name}
-                    ${r.email ? `<div style="font-size: 11px; color: var(--text-secondary); font-weight: 400;">${r.email}</div>` : ''}
+                    ${escapeHTML(r.name)}
+                    ${r.email ? `<div style="font-size: 11px; color: var(--text-secondary); font-weight: 400;">${escapeHTML(r.email)}</div>` : ''}
                 </td>
-                <td style="padding: 12px 16px; color: var(--text-secondary); font-size: 13px;">${r.shift}</td>
+                <td style="padding: 12px 16px; color: var(--text-secondary); font-size: 13px;">${escapeHTML(r.shift)}</td>
                 <td style="padding: 12px 16px; color: var(--text-primary); font-size: 13px; font-weight: 500;">
                     ${formattedLogin} ${delayBadge}
                 </td>
                 <td style="padding: 12px 16px;">${statusBadge}</td>
-                <td style="padding: 12px 16px; color: var(--text-secondary); font-size: 12px;">${r.lastActive}</td>
+                <td style="padding: 12px 16px; color: var(--text-secondary); font-size: 12px;">${escapeHTML(r.lastActive)}</td>
             </tr>
         `;
     });
@@ -7475,6 +7485,7 @@ async function handleNewIncidentSubmit(event) {
     try {
         const newLogRef = database.ref('logs').push();
         await newLogRef.set({
+            uid: currentUser.uid || firebase.auth().currentUser.uid,
             type: type,
             title: title,
             assignedTo: assignee,
@@ -7519,7 +7530,7 @@ function renderIncidentsTable(incidents) {
     let html = '';
     incidents.forEach(inc => {
         const dateStr = inc.timestamp ? new Date(inc.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' }) : 'N/A';
-        const typeBadge = `<span class="badge pending" style="font-size: 10px;">${inc.type || 'Soporte'}</span>`;
+        const typeBadge = `<span class="badge pending" style="font-size: 10px;">${escapeHTML(inc.type || 'Soporte')}</span>`;
         const statusBadge = inc.status === 'Cerrado' 
             ? `<span class="badge status-completed" style="font-size: 10px; background: var(--success); color: white;">Cerrado</span>`
             : `<span class="badge in-progress" style="font-size: 10px; background: var(--warning); color: white;">Abierto</span>`;
@@ -7529,11 +7540,11 @@ function renderIncidentsTable(incidents) {
                 <td style="padding: 10px; font-size: 12px; color: var(--text-secondary);">${dateStr}</td>
                 <td style="padding: 10px;">${typeBadge}</td>
                 <td style="padding: 10px;">
-                    <div style="font-weight: 600; color: var(--text-primary); font-size: 13px;">${inc.title || ''}</div>
-                    <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">${inc.detail || ''}</div>
-                    ${inc.assignedTo ? `<div style="font-size: 10px; color: var(--accent-primary); margin-top: 2px;">Resp: ${inc.assignedTo}</div>` : ''}
+                    <div style="font-weight: 600; color: var(--text-primary); font-size: 13px;">${escapeHTML(inc.title || '')}</div>
+                    <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">${escapeHTML(inc.detail || '')}</div>
+                    ${inc.assignedTo ? `<div style="font-size: 10px; color: var(--accent-primary); margin-top: 2px;">Resp: ${escapeHTML(inc.assignedTo)}</div>` : ''}
                 </td>
-                <td style="padding: 10px; font-size: 12px; color: var(--text-primary);">${inc.reportedBy || 'Anónimo'}</td>
+                <td style="padding: 10px; font-size: 12px; color: var(--text-primary);">${escapeHTML(inc.reportedBy || 'Anónimo')}</td>
                 <td style="padding: 10px; text-align: center;">${statusBadge}</td>
             </tr>
         `;
