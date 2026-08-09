@@ -1,0 +1,29 @@
+name: Firebase Rules Test
+
+on:
+  push:
+    branches:
+      - security-lab
+
+jobs:
+  test-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Print tested candidate hashes
+        run: |
+          echo "RULES_TESTED_HASH=$(git hash-object database.rules.json)"
+          echo "FIREBASE_TEST_EXECUTED_HASH=$(git hash-object firebase.test.js)"
+
+      - name: Run Firebase Emulator Tests
+        run: npx firebase emulators:exec --project riskmanager-security-test "npm test"
