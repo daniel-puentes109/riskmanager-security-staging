@@ -40,11 +40,19 @@ jobs:
           set -o pipefail
           npx firebase emulators:exec --project riskmanager-security-test "npm test" 2>&1 | tee firebase-test-output.log
 
+      - name: Run /logs XSS smoke test
+        id: xss
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:xss 2>&1 | tee xss-smoke-output.log
+
       - name: Publish auditable test summary
         if: always()
         shell: bash
         env:
           EMULATOR_OUTCOME: ${{ steps.emulator.outcome }}
+          XSS_OUTCOME: ${{ steps.xss.outcome }}
         run: |
           {
             echo
@@ -60,9 +68,15 @@ jobs:
             else
               echo "- Outcome: $EMULATOR_OUTCOME"
             fi
+            echo "- /logs XSS smoke: $XSS_OUTCOME"
             echo
             echo "### Jest output"
             echo '```text'
             tail -n 80 firebase-test-output.log 2>/dev/null || echo "No test output was produced."
+            echo '```'
+            echo
+            echo "### XSS smoke output"
+            echo '```text'
+            cat xss-smoke-output.log 2>/dev/null || echo "No XSS smoke output was produced."
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

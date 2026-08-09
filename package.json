@@ -4,7 +4,8 @@
   "description": "Firebase rules testing via Emulator",
   "private": true,
   "scripts": {
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "test:xss": "node xss-smoke.js"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^3.0.2",
