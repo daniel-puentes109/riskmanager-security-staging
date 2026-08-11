@@ -1,0 +1,11 @@
+{
+  "name": "phase1-qa",
+  "version": "1.0.0",
+  "description": "QA tests for Phase 1",
+  "main": "qa_matrix.js",
+  "dependencies": {
+    "@firebase/rules-unit-testing": "^2.0.7",
+    "firebase-admin": "^11.5.0",
+    "node-fetch": "^2.6.9"
+  }
+}
