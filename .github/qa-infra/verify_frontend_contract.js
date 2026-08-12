@@ -50,4 +50,5 @@ output.status = Object.values(output.inputs).every((input) => input.shaVerified 
   : 'FAIL_VERIFIED_EXECUTED';
 const reportPath = process.env.FRONTEND_CONTRACT_REPORT || 'frontend-contract-report.json';
 fs.writeFileSync(reportPath, `${JSON.stringify(output, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify(output)}\n`);
 if (output.status !== 'VERIFIED_EXECUTED') process.exitCode = 1;
