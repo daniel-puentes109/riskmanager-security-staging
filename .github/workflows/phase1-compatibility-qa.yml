@@ -68,13 +68,13 @@ jobs:
         shell: bash
         env:
           R0_B64: ${{ secrets.R0_RULES_B64 }}
-          R1_B64: ${{ secrets.R1_RULES_B64 }}
+          R1_GZIP_B64: ${{ secrets.R1_RULES_GZIP_B64 }}
         run: |
           set -euo pipefail
           test -n "$R0_B64"
-          test -n "$R1_B64"
+          test -n "$R1_GZIP_B64"
           printf '%s' "$R0_B64" | base64 --decode > "$RUNNER_TEMP/r0.json"
-          printf '%s' "$R1_B64" | base64 --decode > "$RUNNER_TEMP/r1.json"
+          printf '%s' "$R1_GZIP_B64" | base64 --decode | gzip --decompress > "$RUNNER_TEMP/r1.json"
           chmod 600 "$RUNNER_TEMP/r0.json" "$RUNNER_TEMP/r1.json"
           R0_SHA="$(sha256sum "$RUNNER_TEMP/r0.json" | cut -d ' ' -f 1)"
           R1_SHA="$(sha256sum "$RUNNER_TEMP/r1.json" | cut -d ' ' -f 1)"

@@ -7,7 +7,7 @@ const forbidden = [
   /riskops-75637/i,
   /firebaseio\.com/i,
   /firebasedatabase\.app/i,
-  /R0_RULES_B64|R1_RULES_B64/,
+  /R0_RULES_B64|R1_RULES_(?:GZIP_)?B64/,
 ];
 
 for (const file of ['phase1-qa-report.json', 'phase1-qa-report.txt', 'network-summary.txt', 'frontend-contract-report.json']) {
