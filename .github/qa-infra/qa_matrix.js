@@ -9,7 +9,7 @@ const { getAuth } = require('firebase-admin/auth');
 const { getDatabase } = require('firebase-admin/database');
 
 const PROJECT_ID = 'demo-risk-manager-qa';
-const DATABASE_NAMESPACE = `${PROJECT_ID}-default-rtdb`;
+const DATABASE_NAMESPACE = PROJECT_ID;
 const EXPECTED_R0_SHA256 = '3730f88e2b3f65841bf8ac92d6d53ac761a0449396da6294fb6f1dae53d7fe2d';
 const EXPECTED_R1_SHA256 = '73da618eaa770025306a74521daea4a1ceb852d0169c83ca45cfa48251c991fd';
 const F0_SHA = '7046de65c52245294fa5cdfdce8e40dde5f0fa34';
