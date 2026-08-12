@@ -59,6 +59,10 @@ jobs:
         working-directory: .github/qa-infra
         run: npm ci --ignore-scripts
 
+      - name: Run deterministic migration unit tests
+        working-directory: .github/qa-infra
+        run: npm run check
+
       - name: Prepare Realtime Database Emulator binary
         working-directory: .github/qa-infra
         run: npx firebase setup:emulators:database

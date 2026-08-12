@@ -1,12 +1,14 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const assert = require('assert/strict');
 const {
   initializeTestEnvironment,
 } = require('@firebase/rules-unit-testing');
 const { initializeApp, deleteApp } = require('firebase-admin/app');
 const { getAuth } = require('firebase-admin/auth');
 const { getDatabase } = require('firebase-admin/database');
+const { planUidMigration } = require('./migration_rehearsal');
 
 const PROJECT_ID = 'demo-risk-manager-qa';
 const DATABASE_NAMESPACE = PROJECT_ID;
@@ -59,6 +61,7 @@ const report = {
   matrices: {},
   roles: {},
   legacy: {},
+  migration: {},
   summary: {},
 };
 
@@ -127,24 +130,32 @@ async function seedState() {
   const db = getDatabase();
   await db.ref().set({
     users: {
-      QA_GESTOR: { role: 'Gestor', status: 'Activo' },
-      QA_OTHER_GESTOR: { role: 'Gestor', status: 'Activo' },
-      QA_SUPERVISOR: { role: 'Supervisor', status: 'Activo' },
-      QA_ADMIN: { role: 'Admin', status: 'Activo' },
-      QA_CONFIRMED_OWNER: { role: 'Gestor', status: 'Activo' },
+      QA_GESTOR: { name: 'QA PRIMARY', email: 'qa-gestor@example.invalid', role: 'Gestor', status: 'Activo' },
+      QA_OTHER_GESTOR: { name: 'QA OTHER', email: 'qa-other@example.invalid', role: 'Gestor', status: 'Activo' },
+      QA_SUPERVISOR: { name: 'QA SUPERVISOR', email: 'qa-supervisor@example.invalid', role: 'Supervisor', status: 'Activo' },
+      QA_ADMIN: { name: 'QA ADMIN', email: 'qa-admin@example.invalid', role: 'Admin', status: 'Activo' },
+      QA_CONFIRMED_OWNER: { name: 'LEGACY OWNER', email: 'qa-owner@example.invalid', role: 'Gestor', status: 'Activo' },
+      QA_DUPLICATE_A: { name: 'DUPLICATE OWNER', email: 'duplicate-a@example.invalid', role: 'Gestor', status: 'Activo' },
+      QA_DUPLICATE_B: { name: 'DUPLICATE OWNER', email: 'duplicate-b@example.invalid', role: 'Gestor', status: 'Activo' },
     },
     permissions: {
-      legacy_pending_without_uid: { gestor: 'LEGACY_OWNER', status: 'Pendiente', approved: false },
-      legacy_approved_without_uid: { gestor: 'LEGACY_OWNER', status: 'Aprobado', approved: true },
-      legacy_rejected_without_uid: { gestor: 'LEGACY_OWNER', status: 'Rechazado', approved: false },
-      pending_with_uid: { gestor: 'LEGACY_OWNER', uid: 'QA_CONFIRMED_OWNER', status: 'Pendiente', approved: false },
+      legacy_pending_without_uid: { gestor: 'LEGACY OWNER', status: 'Pendiente', approved: false },
+      legacy_approved_without_uid: { gestor: 'LEGACY OWNER', status: 'Aprobado', approved: true },
+      legacy_rejected_without_uid: { gestor: 'LEGACY OWNER', status: 'Rechazado', approved: false },
+      ambiguous_without_uid: { gestor: 'DUPLICATE OWNER', status: 'Pendiente', approved: false },
+      conflicting_without_uid: { gestor: 'QA OTHER', email: 'qa-owner@example.invalid', status: 'Pendiente', approved: false },
+      unmatched_without_uid: { gestor: 'UNKNOWN OWNER', status: 'Pendiente', approved: false },
+      pending_with_uid: { gestor: 'LEGACY OWNER', uid: 'QA_CONFIRMED_OWNER', status: 'Pendiente', approved: false },
       other_permission: { uid: 'QA_OTHER_GESTOR', status: 'Pendiente', approved: false },
     },
     login_logs: {
-      legacy_open_without_uid: { loginTime: 100 },
-      legacy_closed_without_uid: { loginTime: 100, logoutTime: 200 },
-      modern_owned: { uid: 'QA_GESTOR', loginTime: 100 },
-      modern_other: { uid: 'QA_OTHER_GESTOR', loginTime: 100 },
+      legacy_open_without_uid: { name: 'QA PRIMARY', email: 'qa-gestor@example.invalid', loginTime: 100 },
+      legacy_closed_without_uid: { name: 'LEGACY OWNER', email: 'qa-owner@example.invalid', loginTime: 100, logoutTime: 200 },
+      ambiguous_open_without_uid: { name: 'DUPLICATE OWNER', loginTime: 100 },
+      open_without_active_session: { name: 'LEGACY OWNER', email: 'qa-owner@example.invalid', loginTime: 100 },
+      unmatched_open_without_uid: { name: 'UNKNOWN OWNER', loginTime: 100 },
+      modern_owned: { uid: 'QA_GESTOR', name: 'QA PRIMARY', loginTime: 100 },
+      modern_other: { uid: 'QA_OTHER_GESTOR', name: 'QA OTHER', loginTime: 100 },
     },
     logs: {
       existing_other: { uid: 'QA_OTHER_GESTOR', type: 'Synthetic', status: 'Abierto' },
@@ -154,13 +165,100 @@ async function seedState() {
       other_report: { uid: 'QA_OTHER_GESTOR', gestor: 'QA_OTHER_GESTOR', timestamp: 100 },
     },
     active_sessions: {
-      QA_GESTOR: { status: 'Activo' },
-      QA_OTHER_GESTOR: { status: 'Activo', uid: 'QA_OTHER_GESTOR' },
+      QA_GESTOR: { name: 'QA PRIMARY', email: 'qa-gestor@example.invalid', status: 'Activo' },
+      QA_OTHER_GESTOR: { name: 'QA OTHER', email: 'qa-other@example.invalid', status: 'Activo', uid: 'QA_OTHER_GESTOR' },
     },
     announcements: {
       existing: { author: 'QA_ADMIN', text: 'Synthetic announcement', readBy: {} },
     },
   });
+}
+
+async function runMigrationRehearsal(r1Path) {
+  qaStage = 'MIGRATION_REHEARSAL_RULES_INITIALIZATION';
+  const testEnv = await initializeTestEnvironment({
+    projectId: PROJECT_ID,
+    database: {
+      host: '127.0.0.1',
+      port: 9000,
+      rules: fs.readFileSync(r1Path, 'utf8'),
+    },
+  });
+  try {
+    qaStage = 'MIGRATION_REHEARSAL_RESET';
+    await resetFixtures();
+    const before = (await getDatabase().ref().once('value')).val() || {};
+    const plan = planUidMigration(before);
+
+    if (plan.counts.permissions !== 3) throw new Error('MIGRATION_PERMISSION_COUNT_MISMATCH');
+    if (plan.counts.loginLogsOpen !== 1) throw new Error('MIGRATION_OPEN_LOG_COUNT_MISMATCH');
+    if (plan.counts.loginLogsClosed !== 1) throw new Error('MIGRATION_CLOSED_LOG_COUNT_MISMATCH');
+    if (plan.counts.ambiguous !== 3) throw new Error('MIGRATION_AMBIGUOUS_COUNT_MISMATCH');
+    if (plan.counts.unmatched !== 3) throw new Error('MIGRATION_UNMATCHED_COUNT_MISMATCH');
+    if (plan.counts.activeSessionsWithoutPayloadUid !== 1) throw new Error('MIGRATION_SESSION_COUNT_MISMATCH');
+    if (Object.keys(plan.updates).some((path) => !/^(permissions|login_logs)\/[^/]+\/uid$/.test(path))) {
+      throw new Error('MIGRATION_UNSAFE_PATH');
+    }
+
+    qaStage = 'MIGRATION_REHEARSAL_APPLY';
+    await getDatabase().ref().update(plan.updates);
+    const after = (await getDatabase().ref().once('value')).val() || {};
+    const expectedAfter = JSON.parse(JSON.stringify(before));
+    for (const [updatePath, uid] of Object.entries(plan.updates)) {
+      const [pathGroup, id, field] = updatePath.split('/');
+      expectedAfter[pathGroup][id][field] = uid;
+    }
+    assert.deepEqual(after, expectedAfter, 'Migration changed fields beyond the planned UID additions');
+    const secondPlan = planUidMigration(after);
+    if (secondPlan.counts.selected !== 0) throw new Error('MIGRATION_NOT_IDEMPOTENT');
+
+    const expectedUidPaths = [
+      'permissions/legacy_pending_without_uid/uid',
+      'permissions/legacy_approved_without_uid/uid',
+      'permissions/legacy_rejected_without_uid/uid',
+      'login_logs/legacy_open_without_uid/uid',
+      'login_logs/legacy_closed_without_uid/uid',
+    ];
+    for (const uidPath of expectedUidPaths) {
+      const snapshot = await getDatabase().ref(uidPath).once('value');
+      if (!snapshot.exists()) throw new Error('MIGRATION_EXPECTED_UID_MISSING');
+    }
+    for (const skipped of plan.skipped) {
+      const uidPath = `${skipped.pathGroup}/${skipped.id}/uid`;
+      const snapshot = await getDatabase().ref(uidPath).once('value');
+      if (snapshot.exists()) throw new Error('MIGRATION_UNSAFE_UID_ASSIGNED');
+    }
+
+    const contexts = {
+      gestor: testEnv.authenticatedContext('QA_GESTOR'),
+      supervisor: testEnv.authenticatedContext('QA_SUPERVISOR'),
+      admin: testEnv.authenticatedContext('QA_ADMIN'),
+      owner: testEnv.authenticatedContext('QA_CONFIRMED_OWNER'),
+    };
+    const postMigrationSpecs = [
+      { id: 'migrated_owner_permission_read', role: 'QA_CONFIRMED_OWNER', pathGroup: 'permissions', path: 'permissions/legacy_pending_without_uid', operation: 'read', expectedAllowed: true, compatibilityRequirement: 'MUST_ALLOW', context: contexts.owner },
+      { id: 'migrated_open_logout_update', role: 'QA_GESTOR', pathGroup: 'login_logs', path: 'login_logs/legacy_open_without_uid', operation: 'update', payload: { logoutTime: 999 }, expectedAllowed: true, compatibilityRequirement: 'MUST_ALLOW', context: contexts.gestor },
+      { id: 'migrated_closed_admin_read', role: 'QA_ADMIN', pathGroup: 'login_logs', path: 'login_logs/legacy_closed_without_uid', operation: 'read', expectedAllowed: true, compatibilityRequirement: 'MUST_ALLOW', context: contexts.admin },
+      { id: 'migrated_permission_supervisor_read', role: 'QA_SUPERVISOR', pathGroup: 'permissions', path: 'permissions/legacy_pending_without_uid', operation: 'read', expectedAllowed: true, context: contexts.supervisor },
+      { id: 'migrated_permission_supervisor_approve', role: 'QA_SUPERVISOR', pathGroup: 'permissions', path: 'permissions/legacy_pending_without_uid', operation: 'update', payload: { status: 'Aprobado' }, expectedAllowed: true, context: contexts.supervisor },
+      { id: 'migrated_permission_admin_approve', role: 'QA_ADMIN', pathGroup: 'permissions', path: 'permissions/legacy_approved_without_uid', operation: 'update', payload: { status: 'Aprobado' }, expectedAllowed: true, context: contexts.admin },
+    ];
+    for (const spec of postMigrationSpecs) await runOperation('F1_R1_MIGRATED', spec);
+
+    report.migration = {
+      status: postMigrationSpecs.every((spec) => {
+        const result = report.operations.find((operation) => operation.matrix === 'F1_R1_MIGRATED' && operation.id === spec.id);
+        return result && result.assertionPassed;
+      }) ? STATUS.VERIFIED : STATUS.FAILED,
+      policy: 'UID_ONLY_UNIQUE_EVIDENCE_NO_OVERWRITE',
+      counts: plan.counts,
+      idempotent: secondPlan.counts.selected === 0,
+      ambiguousRecordsUnchanged: true,
+      unmatchedRecordsUnchanged: true,
+    };
+  } finally {
+    await testEnv.cleanup();
+  }
 }
 
 async function resetFixtures() {
@@ -343,27 +441,36 @@ function aggregate() {
     F1_R0: report.matrices.F1_R0.compatibilityStatus,
     F1_R1: report.matrices.F1_R1.compatibilityStatus,
     F0_R1: report.matrices.F0_R1.compatibilityStatus,
+    F1_R1_MIGRATED: report.migration.status || STATUS.NOT_TESTED,
     ...report.legacy,
     LOGIN_LOGS_WITHOUT_UID_OPEN: STATUS.NOT_TESTED,
     LOGIN_LOGS_WITHOUT_UID_CLOSED: STATUS.NOT_TESTED,
     ACTIVE_SESSIONS_MATCHING_OPEN_LOGIN_LOG: STATUS.NOT_TESTED,
+    MIGRATION_REHEARSAL_OPEN_LOG: report.migration.counts && report.migration.counts.loginLogsOpen === 1 ? STATUS.VERIFIED : STATUS.NOT_TESTED,
+    MIGRATION_REHEARSAL_CLOSED_LOG: report.migration.counts && report.migration.counts.loginLogsClosed === 1 ? STATUS.VERIFIED : STATUS.NOT_TESTED,
+    MIGRATION_REHEARSAL_ACTIVE_SESSION_CORRELATION: report.migration.counts && report.migration.counts.loginLogsOpen === 1 ? STATUS.VERIFIED : STATUS.NOT_TESTED,
+    MIGRATION_IDEMPOTENT: report.migration.idempotent ? STATUS.VERIFIED : STATUS.NOT_TESTED,
+    MIGRATION_AMBIGUOUS_UNCHANGED: report.migration.ambiguousRecordsUnchanged ? STATUS.VERIFIED : STATUS.NOT_TESTED,
+    MIGRATION_UNMATCHED_UNCHANGED: report.migration.unmatchedRecordsUnchanged ? STATUS.VERIFIED : STATUS.NOT_TESTED,
+    REAL_DATA_MIGRATION_PREFLIGHT: STATUS.NOT_TESTED,
     DATA_MIGRATION_REQUIRED: compatibilityFailures.length ? 'YES' : 'NO',
-    DATA_MIGRATION_SCOPE: compatibilityFailures.length ? [...new Set(compatibilityFailures)].sort().join(',') : 'NONE',
-    RULE_CHANGE_REQUIRED: 'REVIEW_REQUIRED',
-    FRONTEND_CHANGE_REQUIRED: compatibilityFailures.some((id) => id === 'frontend_login_payload') ? 'YES' : 'NOT_DETERMINED',
+    DATA_MIGRATION_SCOPE: compatibilityFailures.length ? 'permissions/*/uid,login_logs/*/uid' : 'NONE',
+    RULE_CHANGE_REQUIRED: report.migration.status === STATUS.VERIFIED ? 'NO' : 'REVIEW_REQUIRED',
+    FRONTEND_CHANGE_REQUIRED: process.env.F0_F1_STATIC_CONTRACT === STATUS.VERIFIED ? 'NO' : 'REVIEW_REQUIRED',
     CACHE_CHANGE_REQUIRED: STATUS.NOT_TESTED,
     PAGES_CHANGE_REQUIRED: STATUS.NOT_TESTED,
-    NEW_RELEASE_CANDIDATE_REQUIRED: compatibilityFailures.length ? 'YES' : 'NO',
+    NEW_RELEASE_CANDIDATE_REQUIRED: report.migration.status === STATUS.VERIFIED ? 'NO' : 'YES',
     FRONTEND_SMOKE: STATUS.NOT_TESTED,
     F0_F1_STATIC_CONTRACT: process.env.F0_F1_STATIC_CONTRACT === STATUS.VERIFIED
       ? STATUS.VERIFIED
       : STATUS.FAILED,
-    REMAINING_BLOCKERS: compatibilityFailures.length
-      ? `COMPATIBILITY_FINDINGS:${[...new Set(compatibilityFailures)].sort().join(',')}`
-      : 'NONE',
+    REMAINING_BLOCKERS: report.migration.status === STATUS.VERIFIED
+      ? 'REAL_DATA_MIGRATION_PREFLIGHT,FRONTEND_BROWSER_SMOKE,REAL_SUPERVISOR_ADMIN_SMOKE'
+      : `COMPATIBILITY_FINDINGS:${[...new Set(compatibilityFailures)].sort().join(',')}`,
     PRODUCTION_RELEASE_RECOMMENDATION:
       compatibilityFailures.length
         || harnessFailures.length
+        || report.migration.status !== STATUS.VERIFIED
         || process.env.QA_NETWORK_ISOLATION !== STATUS.VERIFIED
         || process.env.F0_F1_STATIC_CONTRACT !== STATUS.VERIFIED
         ? 'NO-GO'
@@ -425,6 +532,8 @@ async function main() {
         await testEnv.cleanup();
       }
     }
+    qaStage = 'MIGRATION_REHEARSAL';
+    await runMigrationRehearsal(r1Path);
     qaStage = 'AGGREGATION';
     aggregate();
     writeReports();
