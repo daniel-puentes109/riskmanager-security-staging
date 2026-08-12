@@ -1,174 +1,437 @@
+const crypto = require('crypto');
 const fs = require('fs');
-const { initializeTestEnvironment, assertSucceeds, assertFails } = require('@firebase/rules-unit-testing');
-const admin = require('firebase-admin');
+const path = require('path');
+const {
+  initializeTestEnvironment,
+} = require('@firebase/rules-unit-testing');
+const firebaseAdmin = require('firebase-admin');
 
-const PROJECT_ID = "demo-risk-manager-qa";
+const PROJECT_ID = 'demo-risk-manager-qa';
+const DATABASE_NAMESPACE = `${PROJECT_ID}-default-rtdb`;
+const EXPECTED_R0_SHA256 = '3730f88e2b3f65841bf8ac92d6d53ac761a0449396da6294fb6f1dae53d7fe2d';
+const EXPECTED_R1_SHA256 = '73da618eaa770025306a74521daea4a1ceb852d0169c83ca45cfa48251c991fd';
+const F0_SHA = '7046de65c52245294fa5cdfdce8e40dde5f0fa34';
+const F1_SHA = 'cb6eade8d924dcd3ea597d5de13c3d8c5a1c3c07';
+const STATUS = {
+  VERIFIED: 'VERIFIED_EXECUTED',
+  FAILED: 'FAIL_VERIFIED_EXECUTED',
+  PREVIOUS: 'PREVIOUS_EVIDENCE',
+  NOT_TESTED: 'NOT_TESTED',
+};
 
-// Emulators target
-process.env.FIREBASE_AUTH_EMULATOR_HOST = "127.0.0.1:9099";
-process.env.FIREBASE_DATABASE_EMULATOR_HOST = "127.0.0.1:9000";
-admin.initializeApp({ projectId: PROJECT_ID, databaseURL: `http://127.0.0.1:9000/?ns=${PROJECT_ID}-default-rtdb` });
+process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
+process.env.FIREBASE_DATABASE_EMULATOR_HOST = '127.0.0.1:9000';
 
-let reportData = { operations: [], summary: {} };
-let passedMatrixCount = 0;
+const qaUsers = [
+  { uid: 'QA_GESTOR', email: 'qa-gestor@example.invalid', password: 'QaOnly-42!' },
+  { uid: 'QA_OTHER_GESTOR', email: 'qa-other@example.invalid', password: 'QaOnly-42!' },
+  { uid: 'QA_SUPERVISOR', email: 'qa-supervisor@example.invalid', password: 'QaOnly-42!' },
+  { uid: 'QA_ADMIN', email: 'qa-admin@example.invalid', password: 'QaOnly-42!' },
+  { uid: 'QA_CONFIRMED_OWNER', email: 'qa-owner@example.invalid', password: 'QaOnly-42!' },
+];
 
-function logResult(matrix, role, path, op, payload, expectedAllowed, actualAllowed, errorMsg) {
-    const passed = expectedAllowed === actualAllowed;
-    const status = passed ? 'VERIFIED_EXECUTED' : 'FAIL_VERIFIED_EXECUTED';
-    reportData.operations.push({
-        matrix, role, path, operation: op, payload, 
-        expectedAllowed, actualAllowed, status, error: errorMsg || null
-    });
-    return passed;
+const requiredPaths = [
+  'users',
+  'permissions',
+  'login_logs',
+  'logs',
+  'shift_reports',
+  'active_sessions',
+  'announcements',
+];
+
+const report = {
+  metadata: {
+    projectId: PROJECT_ID,
+    productionAccess: false,
+    rules: {},
+    frontend: {
+      F0_SHA,
+      F1_SHA,
+      mode: 'STATIC_CONTRACT',
+      browserSmoke: STATUS.NOT_TESTED,
+    },
+  },
+  operations: [],
+  matrices: {},
+  roles: {},
+  legacy: {},
+  summary: {},
+};
+
+function sha256(filePath) {
+  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
-async function executeOp(matrix, role, path, op, payload, expectedAllowed, context) {
-    let actualAllowed = false;
-    let errorMsg = null;
-    try {
-        if (op === 'read') await context.database().ref(path).once('value');
-        else if (op === 'set') await context.database().ref(path).set(payload);
-        else if (op === 'update') await context.database().ref(path).update(payload);
-        actualAllowed = true;
-    } catch (e) {
-        actualAllowed = false;
-        errorMsg = e.message;
+function redactError(error) {
+  if (!error) return null;
+  const code = typeof error.code === 'string' ? error.code : 'UNKNOWN';
+  if (/permission.denied/i.test(code) || /permission_denied/i.test(String(error.message))) {
+    return 'PERMISSION_DENIED';
+  }
+  return code.replace(/[^A-Z0-9_.-]/gi, '_').slice(0, 80);
+}
+
+function matrixRuleGeneration(matrix) {
+  return matrix.endsWith('_R0') ? 'R0' : 'R1';
+}
+
+function expected(matrix, r0Allowed, r1Allowed) {
+  return matrixRuleGeneration(matrix) === 'R0' ? r0Allowed : r1Allowed;
+}
+
+function publicOperation(operation) {
+  return {
+    id: operation.id,
+    matrix: operation.matrix,
+    role: operation.role,
+    pathGroup: operation.pathGroup,
+    operation: operation.operation,
+    expectedAllowed: operation.expectedAllowed,
+    actualAllowed: operation.actualAllowed,
+    assertionPassed: operation.assertionPassed,
+    compatibilityRequirement: operation.compatibilityRequirement,
+    compatibilityPassed: operation.compatibilityPassed,
+    status: operation.status,
+    errorCode: operation.errorCode,
+  };
+}
+
+async function deleteAllAuthUsers() {
+  let pageToken;
+  do {
+    const page = await firebaseAdmin.auth().listUsers(1000, pageToken);
+    if (page.users.length) {
+      await firebaseAdmin.auth().deleteUsers(page.users.map((user) => user.uid));
     }
-    return logResult(matrix, role, path, op, payload, expectedAllowed, actualAllowed, errorMsg);
+    pageToken = page.pageToken;
+  } while (pageToken);
 }
 
-async function setupMatrix(rulesPath) {
-    const rulesStr = fs.readFileSync(rulesPath, 'utf8');
-    await fetch(`http://127.0.0.1:9000/.settings/rules.json?ns=${PROJECT_ID}-default-rtdb`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: rulesStr
-    });
-    const db = admin.database();
-    await db.ref().remove(); // Clear completely
+async function assertCleanState() {
+  const snapshot = await firebaseAdmin.database().ref().once('value');
+  if (snapshot.exists()) throw new Error('RTDB emulator did not reset');
+  const users = await firebaseAdmin.auth().listUsers(1);
+  if (users.users.length !== 0) throw new Error('Auth emulator did not reset');
+}
 
-    // Clear and Create true auth users
-    const users = [
-        { uid: 'QA_GESTOR', email: 'gestor@test.com' },
-        { uid: 'QA_SUPERVISOR', email: 'supervisor@test.com' },
-        { uid: 'QA_ADMIN', email: 'admin@test.com' },
-        { uid: 'CONFIRMED_OWNER_UID', email: 'owner@test.com' },
-        { uid: 'QA_OTHER_GESTOR', email: 'other@test.com' }
-    ];
-    for (let u of users) {
-        try { await admin.auth().deleteUser(u.uid); } catch (e) {}
-        await admin.auth().createUser({ uid: u.uid, email: u.email });
+async function setRules(rulesPath) {
+  const response = await fetch(
+    `http://127.0.0.1:9000/.settings/rules.json?ns=${DATABASE_NAMESPACE}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: fs.readFileSync(rulesPath, 'utf8'),
+    },
+  );
+  if (!response.ok) throw new Error(`RULE_LOAD_${response.status}`);
+}
+
+async function seedState() {
+  const db = firebaseAdmin.database();
+  await db.ref().set({
+    users: {
+      QA_GESTOR: { role: 'Gestor', status: 'Activo' },
+      QA_OTHER_GESTOR: { role: 'Gestor', status: 'Activo' },
+      QA_SUPERVISOR: { role: 'Supervisor', status: 'Activo' },
+      QA_ADMIN: { role: 'Admin', status: 'Activo' },
+      QA_CONFIRMED_OWNER: { role: 'Gestor', status: 'Activo' },
+    },
+    permissions: {
+      legacy_pending_without_uid: { gestor: 'LEGACY_OWNER', status: 'Pendiente', approved: false },
+      legacy_approved_without_uid: { gestor: 'LEGACY_OWNER', status: 'Aprobado', approved: true },
+      legacy_rejected_without_uid: { gestor: 'LEGACY_OWNER', status: 'Rechazado', approved: false },
+      pending_with_uid: { gestor: 'LEGACY_OWNER', uid: 'QA_CONFIRMED_OWNER', status: 'Pendiente', approved: false },
+      other_permission: { uid: 'QA_OTHER_GESTOR', status: 'Pendiente', approved: false },
+    },
+    login_logs: {
+      legacy_open_without_uid: { loginTime: 100 },
+      legacy_closed_without_uid: { loginTime: 100, logoutTime: 200 },
+      modern_owned: { uid: 'QA_GESTOR', loginTime: 100 },
+      modern_other: { uid: 'QA_OTHER_GESTOR', loginTime: 100 },
+    },
+    logs: {
+      existing_other: { uid: 'QA_OTHER_GESTOR', type: 'Synthetic', status: 'Abierto' },
+    },
+    shift_reports: {
+      own_report: { uid: 'QA_GESTOR', gestor: 'QA_GESTOR', timestamp: 100 },
+      other_report: { uid: 'QA_OTHER_GESTOR', gestor: 'QA_OTHER_GESTOR', timestamp: 100 },
+    },
+    active_sessions: {
+      QA_GESTOR: { status: 'Activo' },
+      QA_OTHER_GESTOR: { status: 'Activo', uid: 'QA_OTHER_GESTOR' },
+    },
+    announcements: {
+      existing: { author: 'QA_ADMIN', text: 'Synthetic announcement', readBy: {} },
+    },
+  });
+}
+
+async function resetMatrix(rulesPath) {
+  await firebaseAdmin.database().ref().remove();
+  await deleteAllAuthUsers();
+  await assertCleanState();
+  await setRules(rulesPath);
+  for (const user of qaUsers) await firebaseAdmin.auth().createUser(user);
+  const created = await firebaseAdmin.auth().listUsers(100);
+  if (created.users.length !== qaUsers.length) throw new Error('Auth fixture count mismatch');
+  await seedState();
+}
+
+async function perform(spec) {
+  try {
+    if (spec.operation === 'auth-login') {
+      const response = await fetch(
+        'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=qa-emulator-key',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: spec.email, password: spec.password, returnSecureToken: true }),
+        },
+      );
+      if (!response.ok) throw new Error(`AUTH_LOGIN_${response.status}`);
+      const result = await response.json();
+      if (!result.idToken || result.localId !== spec.uid) throw new Error('AUTH_LOGIN_INVALID_RESPONSE');
+      return { allowed: true, errorCode: null };
     }
-
-    // Seed RTDB users
-    await db.ref('users/QA_GESTOR').set({ email: 'gestor@test.com', role: 'Gestor', status: 'Activo' });
-    await db.ref('users/QA_SUPERVISOR').set({ email: 'supervisor@test.com', role: 'Supervisor', status: 'Activo' });
-    await db.ref('users/QA_ADMIN').set({ email: 'admin@test.com', role: 'Admin', status: 'Activo' });
-    await db.ref('users/QA_OTHER_GESTOR').set({ email: 'other@test.com', role: 'Gestor', status: 'Activo' });
-    await db.ref('users/CONFIRMED_OWNER_UID').set({ email: 'owner@test.com', role: 'Gestor', status: 'Activo' });
-    
-    // Seed fixtures
-    await db.ref('permissions/legacy_pend_no_uid').set({ gestor: "LEGACY_OWNER", status: "Pendiente" });
-    await db.ref('permissions/legacy_pend_with_uid').set({ gestor: "LEGACY_OWNER", status: "Pendiente", uid: "CONFIRMED_OWNER_UID" });
-    await db.ref('login_logs/legacy_log_open').set({ email: "gestor@test.com", role: "Gestor", timestamp: 123 });
-    await db.ref('login_logs/legacy_log_closed').set({ email: "gestor@test.com", role: "Gestor", timestamp: 123, logoutTime: 124 });
-    await db.ref('active_sessions/QA_GESTOR').set({ email: "gestor@test.com", status: "Active" }); // No UID in payload
+    const db = spec.context.database();
+    if (spec.operation === 'read') await db.ref(spec.path).once('value');
+    else if (spec.operation === 'query-own') {
+      await db.ref(spec.path).orderByChild('uid').equalTo(spec.uid).once('value');
+    } else if (spec.operation === 'set') await db.ref(spec.path).set(spec.payload);
+    else if (spec.operation === 'update') await db.ref(spec.path).update(spec.payload);
+    else if (spec.operation === 'remove') await db.ref(spec.path).remove();
+    else if (spec.operation === 'root-update') await db.ref().update(spec.payload);
+    else throw new Error(`Unknown operation ${spec.operation}`);
+    return { allowed: true, errorCode: null };
+  } catch (error) {
+    return { allowed: false, errorCode: redactError(error) };
+  }
 }
 
-async function run() {
-    const testEnv = await initializeTestEnvironment({ projectId: PROJECT_ID, database: { port: 9000 } });
-    const R0_PATH = process.env.R0_PATH;
-    const R1_PATH = process.env.R1_PATH;
+async function runOperation(matrix, spec) {
+  const outcome = await perform(spec);
+  const assertionPassed = outcome.allowed === spec.expectedAllowed;
+  const compatibilityRequirement = spec.compatibilityRequirement || 'NOT_APPLICABLE';
+  const compatibilityPassed = compatibilityRequirement === 'MUST_ALLOW'
+    ? outcome.allowed
+    : compatibilityRequirement === 'MUST_DENY'
+      ? !outcome.allowed
+      : null;
+  report.operations.push(publicOperation({
+    ...spec,
+    matrix,
+    actualAllowed: outcome.allowed,
+    assertionPassed,
+    compatibilityRequirement,
+    compatibilityPassed,
+    status: assertionPassed ? STATUS.VERIFIED : STATUS.FAILED,
+    errorCode: outcome.errorCode,
+  }));
+}
 
-    if (!R0_PATH || !R1_PATH) throw new Error("R0_PATH and R1_PATH env variables required");
+function buildSpecs(matrix, contexts) {
+  const { unauth, gestor, other, supervisor, admin, owner } = contexts;
+  const modernLogin = { uid: 'QA_GESTOR', loginTime: 300 };
+  const legacyLogin = { loginTime: 300 };
+  const loginPayload = matrix.startsWith('F0_') ? legacyLogin : modernLogin;
+  const r0 = matrixRuleGeneration(matrix) === 'R0';
+  return [
+    { id: 'gestor_auth_login', role: 'QA_GESTOR', pathGroup: 'users', operation: 'auth-login', email: 'qa-gestor@example.invalid', password: 'QaOnly-42!', uid: 'QA_GESTOR', expectedAllowed: true },
+    { id: 'other_gestor_auth_login', role: 'QA_OTHER_GESTOR', pathGroup: 'users', operation: 'auth-login', email: 'qa-other@example.invalid', password: 'QaOnly-42!', uid: 'QA_OTHER_GESTOR', expectedAllowed: true },
+    { id: 'supervisor_auth_login', role: 'QA_SUPERVISOR', pathGroup: 'users', operation: 'auth-login', email: 'qa-supervisor@example.invalid', password: 'QaOnly-42!', uid: 'QA_SUPERVISOR', expectedAllowed: true },
+    { id: 'admin_auth_login', role: 'QA_ADMIN', pathGroup: 'users', operation: 'auth-login', email: 'qa-admin@example.invalid', password: 'QaOnly-42!', uid: 'QA_ADMIN', expectedAllowed: true },
+    { id: 'owner_auth_login', role: 'QA_CONFIRMED_OWNER', pathGroup: 'users', operation: 'auth-login', email: 'qa-owner@example.invalid', password: 'QaOnly-42!', uid: 'QA_CONFIRMED_OWNER', expectedAllowed: true },
+    { id: 'unauth_users_read_denied', role: 'UNAUTH', pathGroup: 'users', path: 'users', operation: 'read', expectedAllowed: false, context: unauth },
+    { id: 'gestor_own_profile_read', role: 'QA_GESTOR', pathGroup: 'users', path: 'users/QA_GESTOR', operation: 'read', expectedAllowed: true, context: gestor },
+    { id: 'gestor_other_profile_read', role: 'QA_GESTOR', pathGroup: 'users', path: 'users/QA_OTHER_GESTOR', operation: 'read', expectedAllowed: r0, context: gestor },
+    { id: 'gestor_role_escalation_denied', role: 'QA_GESTOR', pathGroup: 'users', path: 'users/QA_GESTOR', operation: 'update', payload: { role: 'Admin' }, expectedAllowed: false, context: gestor },
+    { id: 'supervisor_users_read', role: 'QA_SUPERVISOR', pathGroup: 'users', path: 'users', operation: 'read', expectedAllowed: true, context: supervisor },
+    { id: 'supervisor_admin_escalation_denied', role: 'QA_SUPERVISOR', pathGroup: 'users', path: 'users/QA_SUPERVISOR', operation: 'update', payload: { role: 'Admin' }, expectedAllowed: false, context: supervisor },
+    { id: 'admin_user_create', role: 'QA_ADMIN', pathGroup: 'users', path: 'users/QA_NEW_GESTOR', operation: 'set', payload: { role: 'Gestor', status: 'Activo', approved: true }, expectedAllowed: true, context: admin },
 
-    async function runMatrix(name, rulesPath, simulateF0) {
-        await setupMatrix(rulesPath);
-        let allPassed = true;
+    { id: 'gestor_permissions_collection_read', role: 'QA_GESTOR', pathGroup: 'permissions', path: 'permissions', operation: 'read', expectedAllowed: r0, context: gestor },
+    { id: 'gestor_own_permissions_query', role: 'QA_GESTOR', pathGroup: 'permissions', path: 'permissions', operation: 'query-own', uid: 'QA_GESTOR', expectedAllowed: true, context: gestor },
+    { id: 'gestor_other_permission_read', role: 'QA_GESTOR', pathGroup: 'permissions', path: 'permissions/other_permission', operation: 'read', expectedAllowed: r0, context: gestor },
+    { id: 'owner_legacy_permission_without_uid', role: 'QA_CONFIRMED_OWNER', pathGroup: 'permissions', path: 'permissions/legacy_pending_without_uid', operation: 'read', expectedAllowed: r0, compatibilityRequirement: 'MUST_ALLOW', context: owner },
+    { id: 'owner_permission_with_uid', role: 'QA_CONFIRMED_OWNER', pathGroup: 'permissions', path: 'permissions/pending_with_uid', operation: 'read', expectedAllowed: true, compatibilityRequirement: 'MUST_ALLOW', context: owner },
+    { id: 'supervisor_legacy_permission_read', role: 'QA_SUPERVISOR', pathGroup: 'permissions', path: 'permissions/legacy_pending_without_uid', operation: 'read', expectedAllowed: true, context: supervisor },
+    { id: 'supervisor_legacy_permission_approve', role: 'QA_SUPERVISOR', pathGroup: 'permissions', path: 'permissions/legacy_pending_without_uid', operation: 'update', payload: { status: 'Aprobado' }, expectedAllowed: true, context: supervisor },
+    { id: 'admin_legacy_permission_reject', role: 'QA_ADMIN', pathGroup: 'permissions', path: 'permissions/legacy_rejected_without_uid', operation: 'update', payload: { status: 'Rechazado' }, expectedAllowed: true, context: admin },
 
-        const unauthed = testEnv.unauthenticatedContext();
-        const gestor = testEnv.authenticatedContext('QA_GESTOR', { email: 'gestor@test.com' });
-        const supervisor = testEnv.authenticatedContext('QA_SUPERVISOR', { email: 'supervisor@test.com' });
-        const adminCtx = testEnv.authenticatedContext('QA_ADMIN', { email: 'admin@test.com' });
-        const owner = testEnv.authenticatedContext('CONFIRMED_OWNER_UID', { email: 'owner@test.com' });
+    { id: 'frontend_login_payload', role: 'QA_GESTOR', pathGroup: 'login_logs', path: `login_logs/${matrix}_new`, operation: 'set', payload: loginPayload, expectedAllowed: r0 || matrix.startsWith('F1_'), compatibilityRequirement: 'MUST_ALLOW', context: gestor },
+    { id: 'legacy_open_logout_update', role: 'QA_GESTOR', pathGroup: 'login_logs', path: 'login_logs/legacy_open_without_uid', operation: 'update', payload: { logoutTime: 999 }, expectedAllowed: r0, compatibilityRequirement: 'MUST_ALLOW', context: gestor },
+    { id: 'legacy_closed_admin_read', role: 'QA_ADMIN', pathGroup: 'login_logs', path: 'login_logs/legacy_closed_without_uid', operation: 'read', expectedAllowed: true, compatibilityRequirement: 'MUST_ALLOW', context: admin },
+    { id: 'gestor_other_login_mutation', role: 'QA_GESTOR', pathGroup: 'login_logs', path: 'login_logs/modern_other', operation: 'update', payload: { logoutTime: 999 }, expectedAllowed: r0, context: gestor },
 
-        // Helper
-        const test = async (role, path, op, payload, expAllowed, ctx) => {
-            const passed = await executeOp(name, role, path, op, payload, expAllowed, ctx);
-            if (!passed) allPassed = false;
-        };
+    { id: 'gestor_own_log_create', role: 'QA_GESTOR', pathGroup: 'logs', path: `logs/${matrix}_own`, operation: 'set', payload: { uid: 'QA_GESTOR', type: 'Synthetic', status: 'Abierto' }, expectedAllowed: true, context: gestor },
+    { id: 'gestor_spoofed_log_create', role: 'QA_GESTOR', pathGroup: 'logs', path: `logs/${matrix}_spoofed`, operation: 'set', payload: { uid: 'QA_OTHER_GESTOR', type: 'Synthetic', status: 'Abierto' }, expectedAllowed: r0, context: gestor },
+    { id: 'gestor_existing_log_update_denied', role: 'QA_GESTOR', pathGroup: 'logs', path: 'logs/existing_other', operation: 'update', payload: { status: 'Cerrado' }, expectedAllowed: r0, context: gestor },
+    { id: 'supervisor_logs_read', role: 'QA_SUPERVISOR', pathGroup: 'logs', path: 'logs', operation: 'read', expectedAllowed: true, context: supervisor },
+    { id: 'admin_logs_read', role: 'QA_ADMIN', pathGroup: 'logs', path: 'logs', operation: 'read', expectedAllowed: true, context: admin },
 
-        // --- Execute required operations ---
-        let pLog = simulateF0 ? { email: 'gestor@test.com', timestamp: 111 } : { email: 'gestor@test.com', timestamp: 111, uid: 'QA_GESTOR' };
-        
-        // LOGIN (Write log)
-        await test('QA_GESTOR', 'login_logs/log_gestor', 'set', pLog, name !== 'F0_R1', gestor);
-        
-        // READS
-        await test('UNAUTH', 'users', 'read', null, false, unauthed);
-        await test('QA_GESTOR', 'users', 'read', null, true, gestor);
-        await test('QA_SUPERVISOR', 'users', 'read', null, true, supervisor);
-        
-        // OTHER_UID_DATA_EXPOSURE
-        await test('QA_GESTOR', 'active_sessions/QA_OTHER_GESTOR', 'read', null, false, gestor);
-        
-        // FORBIDDEN_WRITES
-        await test('QA_GESTOR', 'users/QA_GESTOR', 'update', { role: 'Admin' }, false, gestor);
-        
-        // ADMIN ONLY
-        await test('QA_GESTOR', 'announcements/ann_new', 'set', { text: 'hola' }, false, gestor);
-        await test('QA_ADMIN', 'announcements/ann_new', 'set', { text: 'hola' }, true, adminCtx);
+    { id: 'gestor_own_shift_report_read', role: 'QA_GESTOR', pathGroup: 'shift_reports', path: 'shift_reports/own_report', operation: 'read', expectedAllowed: true, context: gestor },
+    { id: 'gestor_other_shift_report_read', role: 'QA_GESTOR', pathGroup: 'shift_reports', path: 'shift_reports/other_report', operation: 'read', expectedAllowed: r0, context: gestor },
+    { id: 'gestor_own_shift_report_create', role: 'QA_GESTOR', pathGroup: 'shift_reports', path: `shift_reports/${matrix}_own`, operation: 'set', payload: { uid: 'QA_GESTOR', gestor: 'QA_GESTOR', timestamp: 300 }, expectedAllowed: true, context: gestor },
+    { id: 'gestor_spoofed_shift_report_create', role: 'QA_GESTOR', pathGroup: 'shift_reports', path: `shift_reports/${matrix}_spoofed`, operation: 'set', payload: { uid: 'QA_OTHER_GESTOR', gestor: 'QA_OTHER_GESTOR', timestamp: 300 }, expectedAllowed: r0, context: gestor },
+    { id: 'supervisor_shift_reports_read', role: 'QA_SUPERVISOR', pathGroup: 'shift_reports', path: 'shift_reports', operation: 'read', expectedAllowed: true, context: supervisor },
 
-        // LEGACY SCENARIOS
-        // gestor updates legacy logout
-        await test('QA_GESTOR', 'login_logs/legacy_log_open', 'update', { logoutTime: 999 }, name !== 'F1_R1' && name !== 'F0_R1', gestor);
-        
-        // Admin approves legacy without UID
-        await test('QA_ADMIN', 'permissions/legacy_pend_no_uid', 'update', { status: 'Aprobado' }, true, adminCtx);
-        
-        // Oriana owner reading her own request without UID (fails in R1)
-        await test('CONFIRMED_OWNER_UID', 'permissions/legacy_pend_no_uid', 'read', null, name !== 'F1_R1' && name !== 'F0_R1', owner);
-        // Oriana owner reading her own request with UID (succeeds in all)
-        await test('CONFIRMED_OWNER_UID', 'permissions/legacy_pend_with_uid', 'read', null, true, owner);
+    { id: 'legacy_active_session_owner_read', role: 'QA_GESTOR', pathGroup: 'active_sessions', path: 'active_sessions/QA_GESTOR', operation: 'read', expectedAllowed: true, compatibilityRequirement: 'MUST_ALLOW', context: gestor },
+    { id: 'legacy_active_session_owner_update', role: 'QA_GESTOR', pathGroup: 'active_sessions', path: 'active_sessions/QA_GESTOR', operation: 'update', payload: { lastHeartbeat: 300 }, expectedAllowed: true, compatibilityRequirement: 'MUST_ALLOW', context: gestor },
+    { id: 'gestor_other_active_session_read', role: 'QA_GESTOR', pathGroup: 'active_sessions', path: 'active_sessions/QA_OTHER_GESTOR', operation: 'read', expectedAllowed: r0, context: gestor },
+    { id: 'gestor_other_active_session_write', role: 'QA_GESTOR', pathGroup: 'active_sessions', path: 'active_sessions/QA_OTHER_GESTOR', operation: 'update', payload: { status: 'Inactivo' }, expectedAllowed: r0, context: gestor },
+    { id: 'supervisor_active_sessions_read', role: 'QA_SUPERVISOR', pathGroup: 'active_sessions', path: 'active_sessions', operation: 'read', expectedAllowed: true, context: supervisor },
+    { id: 'admin_active_sessions_read', role: 'QA_ADMIN', pathGroup: 'active_sessions', path: 'active_sessions', operation: 'read', expectedAllowed: true, context: admin },
 
-        reportData.summary[name] = allPassed ? 'VERIFIED_EXECUTED' : 'FAIL_VERIFIED_EXECUTED';
-        if (allPassed) passedMatrixCount++;
+    { id: 'gestor_announcements_read', role: 'QA_GESTOR', pathGroup: 'announcements', path: 'announcements', operation: 'read', expectedAllowed: true, context: gestor },
+    { id: 'gestor_announcement_admin_write', role: 'QA_GESTOR', pathGroup: 'announcements', path: 'announcements/new_admin', operation: 'set', payload: { author: 'QA_GESTOR', text: 'Synthetic' }, expectedAllowed: r0, context: gestor },
+    { id: 'gestor_own_read_receipt', role: 'QA_GESTOR', pathGroup: 'announcements', path: 'announcements/existing/readBy/QA_GESTOR', operation: 'set', payload: { readAt: 300 }, expectedAllowed: true, context: gestor },
+    { id: 'gestor_other_read_receipt', role: 'QA_GESTOR', pathGroup: 'announcements', path: 'announcements/existing/readBy/QA_OTHER_GESTOR', operation: 'set', payload: { readAt: 300 }, expectedAllowed: r0, context: gestor },
+    { id: 'supervisor_announcement_admin_write', role: 'QA_SUPERVISOR', pathGroup: 'announcements', path: 'announcements/supervisor_admin', operation: 'set', payload: { author: 'QA_SUPERVISOR', text: 'Synthetic' }, expectedAllowed: r0, context: supervisor },
+    { id: 'admin_announcement_write', role: 'QA_ADMIN', pathGroup: 'announcements', path: 'announcements/admin', operation: 'set', payload: { author: 'QA_ADMIN', text: 'Synthetic' }, expectedAllowed: true, context: admin },
+
+    { id: 'atomic_shift_close', role: 'QA_GESTOR', pathGroup: 'shift_reports', path: '/', operation: 'root-update', payload: { [`shift_reports/${matrix}_atomic`]: { uid: 'QA_GESTOR', gestor: 'QA_GESTOR', timestamp: 400 }, 'active_sessions/QA_GESTOR': null, 'login_logs/modern_owned/logoutTime': 400 }, expectedAllowed: true, context: gestor },
+    { id: 'atomic_shift_close_other_denied', role: 'QA_GESTOR', pathGroup: 'shift_reports', path: '/', operation: 'root-update', payload: { [`shift_reports/${matrix}_atomic_bad`]: { uid: 'QA_GESTOR', gestor: 'QA_GESTOR', timestamp: 401 }, 'active_sessions/QA_OTHER_GESTOR': null, 'login_logs/modern_other/logoutTime': 401 }, expectedAllowed: r0, context: gestor },
+
+    { id: 'other_gestor_own_profile_read', role: 'QA_OTHER_GESTOR', pathGroup: 'users', path: 'users/QA_OTHER_GESTOR', operation: 'read', expectedAllowed: true, context: other },
+  ];
+}
+
+function aggregate() {
+  for (const matrix of ['F0_R0', 'F1_R0', 'F1_R1', 'F0_R1']) {
+    const operations = report.operations.filter((op) => op.matrix === matrix);
+    const covered = new Set(operations.map((op) => op.pathGroup));
+    const complete = requiredPaths.every((item) => covered.has(item));
+    const assertionsPass = operations.length > 0 && operations.every((op) => op.assertionPassed);
+    const compatibilityFindings = operations.filter((op) => op.compatibilityPassed === false).map((op) => op.id);
+    report.matrices[matrix] = {
+      status: complete && assertionsPass ? STATUS.VERIFIED : STATUS.FAILED,
+      requiredPathsCovered: complete,
+      operationCount: operations.length,
+      assertionFailures: operations.filter((op) => !op.assertionPassed).map((op) => op.id),
+      compatibilityFindings,
+      compatibilityStatus: compatibilityFindings.length ? STATUS.FAILED : STATUS.VERIFIED,
+    };
+  }
+
+  for (const role of ['QA_GESTOR', 'QA_OTHER_GESTOR', 'QA_SUPERVISOR', 'QA_ADMIN', 'QA_CONFIRMED_OWNER']) {
+    const operations = report.operations.filter((op) => op.role === role);
+    report.roles[role] = operations.length > 0 && operations.every((op) => op.assertionPassed)
+      ? STATUS.VERIFIED
+      : STATUS.FAILED;
+  }
+
+  function operationStatus(matrix, id) {
+    const operation = report.operations.find((item) => item.matrix === matrix && item.id === id);
+    if (!operation) return STATUS.NOT_TESTED;
+    return operation.compatibilityPassed === false ? STATUS.FAILED : operation.status;
+  }
+
+  report.legacy = {
+    ORIANA_WITHOUT_UID: operationStatus('F1_R1', 'owner_legacy_permission_without_uid'),
+    ORIANA_WITH_UID: operationStatus('F1_R1', 'owner_permission_with_uid'),
+    OPEN_LOGIN_LOG_WITHOUT_UID: operationStatus('F1_R1', 'legacy_open_logout_update'),
+    CLOSED_LOGIN_LOG_WITHOUT_UID: operationStatus('F1_R1', 'legacy_closed_admin_read'),
+    LEGACY_ACTIVE_SESSION: operationStatus('F1_R1', 'legacy_active_session_owner_update'),
+  };
+
+  const compatibilityFailures = Object.values(report.matrices)
+    .flatMap((matrix) => matrix.compatibilityFindings);
+  const harnessFailures = report.operations.filter((op) => !op.assertionPassed);
+  report.summary = {
+    QA_NETWORK_ISOLATION: process.env.QA_NETWORK_ISOLATION === STATUS.VERIFIED ? STATUS.VERIFIED : STATUS.FAILED,
+    PRODUCTION_NETWORK_REQUESTS: Number(process.env.PRODUCTION_NETWORK_REQUESTS || '1'),
+    QA_GESTOR: report.roles.QA_GESTOR,
+    QA_SUPERVISOR: report.roles.QA_SUPERVISOR,
+    QA_ADMIN: report.roles.QA_ADMIN,
+    F0_R0: report.matrices.F0_R0.compatibilityStatus,
+    F1_R0: report.matrices.F1_R0.compatibilityStatus,
+    F1_R1: report.matrices.F1_R1.compatibilityStatus,
+    F0_R1: report.matrices.F0_R1.compatibilityStatus,
+    ...report.legacy,
+    LOGIN_LOGS_WITHOUT_UID_OPEN: STATUS.NOT_TESTED,
+    LOGIN_LOGS_WITHOUT_UID_CLOSED: STATUS.NOT_TESTED,
+    ACTIVE_SESSIONS_MATCHING_OPEN_LOGIN_LOG: STATUS.NOT_TESTED,
+    DATA_MIGRATION_REQUIRED: compatibilityFailures.length ? 'YES' : 'NO',
+    DATA_MIGRATION_SCOPE: compatibilityFailures.length ? [...new Set(compatibilityFailures)].sort().join(',') : 'NONE',
+    RULE_CHANGE_REQUIRED: 'REVIEW_REQUIRED',
+    FRONTEND_CHANGE_REQUIRED: compatibilityFailures.some((id) => id === 'frontend_login_payload') ? 'YES' : 'NOT_DETERMINED',
+    CACHE_CHANGE_REQUIRED: STATUS.NOT_TESTED,
+    PAGES_CHANGE_REQUIRED: STATUS.NOT_TESTED,
+    NEW_RELEASE_CANDIDATE_REQUIRED: compatibilityFailures.length ? 'YES' : 'NO',
+    FRONTEND_SMOKE: STATUS.NOT_TESTED,
+    F0_F1_STATIC_CONTRACT: process.env.F0_F1_STATIC_CONTRACT === STATUS.VERIFIED
+      ? STATUS.VERIFIED
+      : STATUS.FAILED,
+    REMAINING_BLOCKERS: compatibilityFailures.length
+      ? `COMPATIBILITY_FINDINGS:${[...new Set(compatibilityFailures)].sort().join(',')}`
+      : 'NONE',
+    PRODUCTION_RELEASE_RECOMMENDATION:
+      compatibilityFailures.length
+        || harnessFailures.length
+        || process.env.QA_NETWORK_ISOLATION !== STATUS.VERIFIED
+        || process.env.F0_F1_STATIC_CONTRACT !== STATUS.VERIFIED
+        ? 'NO-GO'
+        : 'GO',
+  };
+}
+
+function writeReports() {
+  fs.writeFileSync('phase1-qa-report.json', `${JSON.stringify(report, null, 2)}\n`);
+  const lines = [
+    `PRODUCTION_R0_SHA256 = ${report.metadata.rules.R0.sha256}`,
+    `R1_SHA256 = ${report.metadata.rules.R1.sha256}`,
+    ...Object.entries(report.summary).map(([key, value]) => `${key} = ${value}`),
+  ];
+  fs.writeFileSync('phase1-qa-report.txt', `${lines.join('\n')}\n`);
+}
+
+async function main() {
+  const r0Path = process.env.R0_PATH;
+  const r1Path = process.env.R1_PATH;
+  if (!r0Path || !r1Path) throw new Error('R0_PATH and R1_PATH are required');
+  report.metadata.rules.R0 = { sha256: sha256(r0Path) };
+  report.metadata.rules.R1 = { sha256: sha256(r1Path) };
+  if (report.metadata.rules.R0.sha256 !== EXPECTED_R0_SHA256) throw new Error('R0_SHA256_MISMATCH');
+  if (report.metadata.rules.R1.sha256 !== EXPECTED_R1_SHA256) throw new Error('R1_SHA256_MISMATCH');
+
+  const adminApp = firebaseAdmin.initializeApp({
+    projectId: PROJECT_ID,
+    databaseURL: `http://127.0.0.1:9000/?ns=${DATABASE_NAMESPACE}`,
+  });
+  const testEnv = await initializeTestEnvironment({
+    projectId: PROJECT_ID,
+    database: { host: '127.0.0.1', port: 9000 },
+  });
+
+  try {
+    for (const matrix of ['F0_R0', 'F1_R0', 'F1_R1', 'F0_R1']) {
+      await resetMatrix(matrixRuleGeneration(matrix) === 'R0' ? r0Path : r1Path);
+      const contexts = {
+        unauth: testEnv.unauthenticatedContext(),
+        gestor: testEnv.authenticatedContext('QA_GESTOR'),
+        other: testEnv.authenticatedContext('QA_OTHER_GESTOR'),
+        supervisor: testEnv.authenticatedContext('QA_SUPERVISOR'),
+        admin: testEnv.authenticatedContext('QA_ADMIN'),
+        owner: testEnv.authenticatedContext('QA_CONFIRMED_OWNER'),
+      };
+      for (const spec of buildSpecs(matrix, contexts)) await runOperation(matrix, spec);
     }
+    aggregate();
+    writeReports();
+  } finally {
+    await testEnv.cleanup();
+    await adminApp.delete();
+  }
 
-    await runMatrix('F0_R0', R0_PATH, true);
-    await runMatrix('F1_R0', R0_PATH, false);
-    await runMatrix('F1_R1', R1_PATH, false);
-    await runMatrix('F0_R1', R1_PATH, true);
-
-    fs.writeFileSync('phase1-qa-report.json', JSON.stringify(reportData, null, 2));
-
-    let txtOut = `PRODUCTION_R0_SHA256 = 3730f88e2b3f65841bf8ac92d6d53ac761a0449396da6294fb6f1dae53d7fe2d\n`;
-    txtOut += `QA_NETWORK_ISOLATION = VERIFIED_EXECUTED\n`;
-    txtOut += `QA_GESTOR = VERIFIED_EXECUTED\n`;
-    txtOut += `QA_SUPERVISOR = VERIFIED_EXECUTED\n`;
-    txtOut += `QA_ADMIN = VERIFIED_EXECUTED\n\n`;
-
-    txtOut += `F0_R0 = ${reportData.summary['F0_R0']}\n`;
-    txtOut += `F1_R0 = ${reportData.summary['F1_R0']}\n`;
-    txtOut += `F1_R1 = ${reportData.summary['F1_R1']}\n`;
-    txtOut += `F0_R1 = ${reportData.summary['F0_R1']}\n\n`;
-
-    txtOut += `LOGIN_LOGS_WITHOUT_UID_OPEN = PREVIOUS_EVIDENCE\n`;
-    txtOut += `LOGIN_LOGS_WITHOUT_UID_CLOSED = PREVIOUS_EVIDENCE\n`;
-    txtOut += `ACTIVE_SESSIONS_MATCHING_OPEN_LOGIN_LOG = PREVIOUS_EVIDENCE\n\n`;
-
-    txtOut += `DATA_MIGRATION_REQUIRED = YES\n`;
-    txtOut += `DATA_MIGRATION_SCOPE = login_logs, active_sessions, permissions without uid\n`;
-    txtOut += `RULE_CHANGE_REQUIRED = NO\n`;
-    txtOut += `FRONTEND_CHANGE_REQUIRED = YES\n`;
-    txtOut += `CACHE_CHANGE_REQUIRED = YES\n`;
-    txtOut += `PAGES_CHANGE_REQUIRED = YES\n`;
-    txtOut += `NEW_RELEASE_CANDIDATE_REQUIRED = YES\n\n`;
-    
-    txtOut += `REMAINING_BLOCKERS = Migracion pendiente\n`;
-    txtOut += `PRODUCTION_RELEASE_RECOMMENDATION = NO-GO\n`;
-
-    fs.writeFileSync('phase1-qa-report.txt', txtOut);
-    console.log("Suite complete.");
-    process.exit(0);
+  const harnessFailed = report.operations.some((operation) => !operation.assertionPassed);
+  const coverageFailed = Object.values(report.matrices).some((matrix) => !matrix.requiredPathsCovered);
+  const isolationFailed = report.summary.QA_NETWORK_ISOLATION !== STATUS.VERIFIED
+    || report.summary.PRODUCTION_NETWORK_REQUESTS !== 0;
+  if (harnessFailed || coverageFailed || isolationFailed) process.exitCode = 1;
 }
 
-run().catch(e => { console.error(e); process.exit(1); });
+main().catch((error) => {
+  console.error(redactError(error));
+  process.exitCode = 1;
+});
