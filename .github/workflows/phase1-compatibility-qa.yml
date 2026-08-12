@@ -124,7 +124,9 @@ jobs:
       - name: Validate sanitized artifacts
         if: success()
         working-directory: .github/qa-infra
-        run: node sanitize_reports.js
+        run: |
+          node sanitize_reports.js
+          cat phase1-qa-report.txt
 
       - name: Upload sanitized QA artifacts
         if: success()
