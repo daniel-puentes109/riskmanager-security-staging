@@ -123,18 +123,6 @@ async function assertCleanState() {
   if (users.users.length !== 0) throw new Error('Auth emulator did not reset');
 }
 
-async function setRules(rulesPath) {
-  const response = await fetch(
-    `http://127.0.0.1:9000/.settings/rules.json?ns=${DATABASE_NAMESPACE}`,
-    {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: fs.readFileSync(rulesPath, 'utf8'),
-    },
-  );
-  if (!response.ok) throw new Error(`RULE_LOAD_${response.status}`);
-}
-
 async function seedState() {
   const db = getDatabase();
   await db.ref().set({
@@ -175,11 +163,10 @@ async function seedState() {
   });
 }
 
-async function resetMatrix(rulesPath) {
+async function resetFixtures() {
   await getDatabase().ref().remove();
   await deleteAllAuthUsers();
   await assertCleanState();
-  await setRules(rulesPath);
   for (const user of qaUsers) await getAuth().createUser(user);
   const created = await getAuth().listUsers(100);
   if (created.users.length !== qaUsers.length) throw new Error('Auth fixture count mismatch');
@@ -409,32 +396,39 @@ async function main() {
     projectId: PROJECT_ID,
     databaseURL: `http://127.0.0.1:9000/?ns=${DATABASE_NAMESPACE}`,
   });
-  qaStage = 'RULES_TEST_ENVIRONMENT_INITIALIZATION';
-  const testEnv = await initializeTestEnvironment({
-    projectId: PROJECT_ID,
-    database: { host: '127.0.0.1', port: 9000 },
-  });
-
   try {
     for (const matrix of ['F0_R0', 'F1_R0', 'F1_R1', 'F0_R1']) {
+      const rulesPath = matrixRuleGeneration(matrix) === 'R0' ? r0Path : r1Path;
+      qaStage = `MATRIX_${matrix}_RULES_INITIALIZATION`;
+      const testEnv = await initializeTestEnvironment({
+        projectId: PROJECT_ID,
+        database: {
+          host: '127.0.0.1',
+          port: 9000,
+          rules: fs.readFileSync(rulesPath, 'utf8'),
+        },
+      });
       qaStage = `MATRIX_${matrix}_RESET`;
-      await resetMatrix(matrixRuleGeneration(matrix) === 'R0' ? r0Path : r1Path);
-      const contexts = {
-        unauth: testEnv.unauthenticatedContext(),
-        gestor: testEnv.authenticatedContext('QA_GESTOR'),
-        other: testEnv.authenticatedContext('QA_OTHER_GESTOR'),
-        supervisor: testEnv.authenticatedContext('QA_SUPERVISOR'),
-        admin: testEnv.authenticatedContext('QA_ADMIN'),
-        owner: testEnv.authenticatedContext('QA_CONFIRMED_OWNER'),
-      };
-      qaStage = `MATRIX_${matrix}_OPERATIONS`;
-      for (const spec of buildSpecs(matrix, contexts)) await runOperation(matrix, spec);
+      try {
+        await resetFixtures();
+        const contexts = {
+          unauth: testEnv.unauthenticatedContext(),
+          gestor: testEnv.authenticatedContext('QA_GESTOR'),
+          other: testEnv.authenticatedContext('QA_OTHER_GESTOR'),
+          supervisor: testEnv.authenticatedContext('QA_SUPERVISOR'),
+          admin: testEnv.authenticatedContext('QA_ADMIN'),
+          owner: testEnv.authenticatedContext('QA_CONFIRMED_OWNER'),
+        };
+        qaStage = `MATRIX_${matrix}_OPERATIONS`;
+        for (const spec of buildSpecs(matrix, contexts)) await runOperation(matrix, spec);
+      } finally {
+        await testEnv.cleanup();
+      }
     }
     qaStage = 'AGGREGATION';
     aggregate();
     writeReports();
   } finally {
-    await testEnv.cleanup();
     await deleteApp(adminApp);
   }
 
