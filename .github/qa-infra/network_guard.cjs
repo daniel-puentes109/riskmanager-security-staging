@@ -15,7 +15,12 @@ function hostnameOf(input) {
 }
 
 function assertAllowed(hostname) {
-  const normalized = String(hostname).split(':')[0].toLowerCase();
+  const raw = String(hostname).toLowerCase();
+  const normalized = raw.startsWith('[')
+    ? raw.slice(1, raw.indexOf(']'))
+    : raw === '::1'
+      ? raw
+      : raw.split(':')[0];
   const allowed = normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1';
   if (!allowed) {
     blocked.push(normalized);

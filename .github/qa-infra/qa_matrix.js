@@ -18,6 +18,7 @@ const STATUS = {
   PREVIOUS: 'PREVIOUS_EVIDENCE',
   NOT_TESTED: 'NOT_TESTED',
 };
+let qaStage = 'BOOTSTRAP';
 
 process.env.FIREBASE_AUTH_EMULATOR_HOST = '127.0.0.1:9099';
 process.env.FIREBASE_DATABASE_EMULATOR_HOST = '127.0.0.1:9000';
@@ -69,7 +70,12 @@ function redactError(error) {
   if (/permission.denied/i.test(code) || /permission_denied/i.test(String(error.message))) {
     return 'PERMISSION_DENIED';
   }
-  return code.replace(/[^A-Z0-9_.-]/gi, '_').slice(0, 80);
+  if (code !== 'UNKNOWN') return code.replace(/[^A-Z0-9_.-]/gi, '_').slice(0, 80);
+  return String(error.message || 'UNKNOWN')
+    .replace(/https?:\/\/\S+/gi, 'LOCAL_ENDPOINT')
+    .replace(/[^A-Z0-9_. -]/gi, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 120);
 }
 
 function matrixRuleGeneration(matrix) {
@@ -387,6 +393,7 @@ function writeReports() {
 }
 
 async function main() {
+  qaStage = 'INPUT_VALIDATION';
   const r0Path = process.env.R0_PATH;
   const r1Path = process.env.R1_PATH;
   if (!r0Path || !r1Path) throw new Error('R0_PATH and R1_PATH are required');
@@ -395,10 +402,12 @@ async function main() {
   if (report.metadata.rules.R0.sha256 !== EXPECTED_R0_SHA256) throw new Error('R0_SHA256_MISMATCH');
   if (report.metadata.rules.R1.sha256 !== EXPECTED_R1_SHA256) throw new Error('R1_SHA256_MISMATCH');
 
+  qaStage = 'ADMIN_INITIALIZATION';
   const adminApp = firebaseAdmin.initializeApp({
     projectId: PROJECT_ID,
     databaseURL: `http://127.0.0.1:9000/?ns=${DATABASE_NAMESPACE}`,
   });
+  qaStage = 'RULES_TEST_ENVIRONMENT_INITIALIZATION';
   const testEnv = await initializeTestEnvironment({
     projectId: PROJECT_ID,
     database: { host: '127.0.0.1', port: 9000 },
@@ -406,6 +415,7 @@ async function main() {
 
   try {
     for (const matrix of ['F0_R0', 'F1_R0', 'F1_R1', 'F0_R1']) {
+      qaStage = `MATRIX_${matrix}_RESET`;
       await resetMatrix(matrixRuleGeneration(matrix) === 'R0' ? r0Path : r1Path);
       const contexts = {
         unauth: testEnv.unauthenticatedContext(),
@@ -415,8 +425,10 @@ async function main() {
         admin: testEnv.authenticatedContext('QA_ADMIN'),
         owner: testEnv.authenticatedContext('QA_CONFIRMED_OWNER'),
       };
+      qaStage = `MATRIX_${matrix}_OPERATIONS`;
       for (const spec of buildSpecs(matrix, contexts)) await runOperation(matrix, spec);
     }
+    qaStage = 'AGGREGATION';
     aggregate();
     writeReports();
   } finally {
@@ -432,6 +444,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(redactError(error));
+  console.error(`QA_FAILURE_STAGE=${qaStage}`);
+  console.error(`QA_FAILURE=${redactError(error)}`);
   process.exitCode = 1;
 });
