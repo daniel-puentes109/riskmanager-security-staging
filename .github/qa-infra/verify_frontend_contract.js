@@ -5,7 +5,7 @@ const inputs = [
   {
     label: 'F0',
     env: 'F0_APP_PATH',
-    sha: 'bc826c1d343c6c2c57a9b1570d8b964b4fe5ffadcb270b2f3aa80cd6c1eea62c',
+    sha: '7b94efd597551c7e6eae7409cc0795b543cdcb3716247732fa9f5096ff98813a',
     mustContain: [],
     mustNotContain: [
       "uid: userUid",
@@ -16,7 +16,7 @@ const inputs = [
   {
     label: 'F1',
     env: 'F1_APP_PATH',
-    sha: '6aa3c44deaa45dede85fdf27e877219b60d9c6e2b0f6faac1638f1277c630053',
+    sha: 'f4b5d15422346ae4513b454434fd7485c5413875cac5e169c1bea2b4b1573a0e',
     mustContain: [
       "uid: userUid",
       "uid: currentUser.uid || firebase.auth().currentUser.uid",
