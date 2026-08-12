@@ -4,7 +4,9 @@ const path = require('path');
 const {
   initializeTestEnvironment,
 } = require('@firebase/rules-unit-testing');
-const firebaseAdmin = require('firebase-admin');
+const { initializeApp, deleteApp } = require('firebase-admin/app');
+const { getAuth } = require('firebase-admin/auth');
+const { getDatabase } = require('firebase-admin/database');
 
 const PROJECT_ID = 'demo-risk-manager-qa';
 const DATABASE_NAMESPACE = `${PROJECT_ID}-default-rtdb`;
@@ -106,18 +108,18 @@ function publicOperation(operation) {
 async function deleteAllAuthUsers() {
   let pageToken;
   do {
-    const page = await firebaseAdmin.auth().listUsers(1000, pageToken);
+    const page = await getAuth().listUsers(1000, pageToken);
     if (page.users.length) {
-      await firebaseAdmin.auth().deleteUsers(page.users.map((user) => user.uid));
+      await getAuth().deleteUsers(page.users.map((user) => user.uid));
     }
     pageToken = page.pageToken;
   } while (pageToken);
 }
 
 async function assertCleanState() {
-  const snapshot = await firebaseAdmin.database().ref().once('value');
+  const snapshot = await getDatabase().ref().once('value');
   if (snapshot.exists()) throw new Error('RTDB emulator did not reset');
-  const users = await firebaseAdmin.auth().listUsers(1);
+  const users = await getAuth().listUsers(1);
   if (users.users.length !== 0) throw new Error('Auth emulator did not reset');
 }
 
@@ -134,7 +136,7 @@ async function setRules(rulesPath) {
 }
 
 async function seedState() {
-  const db = firebaseAdmin.database();
+  const db = getDatabase();
   await db.ref().set({
     users: {
       QA_GESTOR: { role: 'Gestor', status: 'Activo' },
@@ -174,12 +176,12 @@ async function seedState() {
 }
 
 async function resetMatrix(rulesPath) {
-  await firebaseAdmin.database().ref().remove();
+  await getDatabase().ref().remove();
   await deleteAllAuthUsers();
   await assertCleanState();
   await setRules(rulesPath);
-  for (const user of qaUsers) await firebaseAdmin.auth().createUser(user);
-  const created = await firebaseAdmin.auth().listUsers(100);
+  for (const user of qaUsers) await getAuth().createUser(user);
+  const created = await getAuth().listUsers(100);
   if (created.users.length !== qaUsers.length) throw new Error('Auth fixture count mismatch');
   await seedState();
 }
@@ -403,7 +405,7 @@ async function main() {
   if (report.metadata.rules.R1.sha256 !== EXPECTED_R1_SHA256) throw new Error('R1_SHA256_MISMATCH');
 
   qaStage = 'ADMIN_INITIALIZATION';
-  const adminApp = firebaseAdmin.initializeApp({
+  const adminApp = initializeApp({
     projectId: PROJECT_ID,
     databaseURL: `http://127.0.0.1:9000/?ns=${DATABASE_NAMESPACE}`,
   });
@@ -433,7 +435,7 @@ async function main() {
     writeReports();
   } finally {
     await testEnv.cleanup();
-    await adminApp.delete();
+    await deleteApp(adminApp);
   }
 
   const harnessFailed = report.operations.some((operation) => !operation.assertionPassed);
