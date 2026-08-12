@@ -94,8 +94,7 @@ jobs:
           git -C "$RUNNER_TEMP/source" remote add origin https://github.com/VirtualSoft026/riesgovirtualsoft.git
           git -C "$RUNNER_TEMP/source" fetch --depth=1 origin 7046de65c52245294fa5cdfdce8e40dde5f0fa34
           git -C "$RUNNER_TEMP/source" show FETCH_HEAD:app.js > "$F0_APP_PATH"
-          git -C "$RUNNER_TEMP/source" fetch --depth=1 origin cb6eade8d924dcd3ea597d5de13c3d8c5a1c3c07
-          git -C "$RUNNER_TEMP/source" show FETCH_HEAD:app.js > "$F1_APP_PATH"
+          cp "$GITHUB_WORKSPACE/app.js" "$F1_APP_PATH"
           cd .github/qa-infra
           node verify_frontend_contract.js
           echo "F0_F1_STATIC_CONTRACT=VERIFIED_EXECUTED" >> "$GITHUB_ENV"
@@ -123,12 +122,12 @@ jobs:
           npm run qa
 
       - name: Validate sanitized artifacts
-        if: always()
+        if: success()
         working-directory: .github/qa-infra
         run: node sanitize_reports.js
 
       - name: Upload sanitized QA artifacts
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: phase1-qa-artifacts
