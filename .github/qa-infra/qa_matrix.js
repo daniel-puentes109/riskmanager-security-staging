@@ -149,7 +149,8 @@ async function seedState() {
       other_permission: { uid: 'QA_OTHER_GESTOR', status: 'Pendiente', approved: false },
     },
     login_logs: {
-      legacy_open_without_uid: { name: 'QA PRIMARY', email: 'qa-gestor@example.invalid', loginTime: 100 },
+      legacy_open_without_uid: { name: 'QA PRIMARY', email: 'qa-gestor@example.invalid', timestamp: 1_000_100 },
+      stale_open_with_active_identity: { name: 'QA PRIMARY', email: 'qa-gestor@example.invalid', timestamp: 10 },
       legacy_closed_without_uid: { name: 'LEGACY OWNER', email: 'qa-owner@example.invalid', loginTime: 100, logoutTime: 200 },
       ambiguous_open_without_uid: { name: 'DUPLICATE OWNER', loginTime: 100 },
       open_without_active_session: { name: 'LEGACY OWNER', email: 'qa-owner@example.invalid', loginTime: 100 },
@@ -165,7 +166,7 @@ async function seedState() {
       other_report: { uid: 'QA_OTHER_GESTOR', gestor: 'QA_OTHER_GESTOR', timestamp: 100 },
     },
     active_sessions: {
-      QA_GESTOR: { name: 'QA PRIMARY', email: 'qa-gestor@example.invalid', status: 'Activo' },
+      QA_GESTOR: { name: 'QA PRIMARY', email: 'qa-gestor@example.invalid', status: 'Activo', loginTime: 1_000_000, lastActive: 1_100_000 },
       QA_OTHER_GESTOR: { name: 'QA OTHER', email: 'qa-other@example.invalid', status: 'Activo', uid: 'QA_OTHER_GESTOR' },
     },
     announcements: {
@@ -194,7 +195,7 @@ async function runMigrationRehearsal(r1Path) {
     if (plan.counts.loginLogsOpen !== 1) throw new Error('MIGRATION_OPEN_LOG_COUNT_MISMATCH');
     if (plan.counts.loginLogsClosed !== 1) throw new Error('MIGRATION_CLOSED_LOG_COUNT_MISMATCH');
     if (plan.counts.ambiguous !== 3) throw new Error('MIGRATION_AMBIGUOUS_COUNT_MISMATCH');
-    if (plan.counts.unmatched !== 3) throw new Error('MIGRATION_UNMATCHED_COUNT_MISMATCH');
+    if (plan.counts.unmatched !== 4) throw new Error('MIGRATION_UNMATCHED_COUNT_MISMATCH');
     if (plan.counts.activeSessionsWithoutPayloadUid !== 1) throw new Error('MIGRATION_SESSION_COUNT_MISMATCH');
     if (Object.keys(plan.updates).some((path) => !/^(permissions|login_logs)\/[^/]+\/uid$/.test(path))) {
       throw new Error('MIGRATION_UNSAFE_PATH');

@@ -35,6 +35,22 @@ function intersect(left, right) {
   return new Set([...left].filter((value) => right.has(value)));
 }
 
+const OPEN_LOG_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+function toEpochMillis(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || !value.trim()) return null;
+
+  const trimmed = value.trim();
+  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function resolveIdentity(record, index, nameFields) {
   const evidence = [];
   if (record && record.email) evidence.push(lookup(index.byEmail, record.email));
@@ -59,9 +75,21 @@ function activeSessionSupports(uid, log, users, activeSessions) {
     [log && (log.name || log.gestor), session.name || session.gestor || user.name],
   ].filter(([left]) => normalizeIdentity(left));
 
-  return comparisons.length > 0 && comparisons.every(([left, right]) => (
+  const identityMatches = comparisons.length > 0 && comparisons.every(([left, right]) => (
     normalizeIdentity(left) === normalizeIdentity(right)
   ));
+  if (!identityMatches) return false;
+
+  const logStartedAt = toEpochMillis(log && (log.timestamp ?? log.loginTime));
+  const sessionStartedAt = toEpochMillis(session.loginTime ?? session.startTime);
+  const sessionLastActiveAt = toEpochMillis(session.lastActive);
+  if (logStartedAt === null || sessionStartedAt === null || sessionLastActiveAt === null) {
+    return false;
+  }
+
+  if (sessionLastActiveAt < sessionStartedAt - OPEN_LOG_CLOCK_SKEW_MS) return false;
+  return logStartedAt >= sessionStartedAt - OPEN_LOG_CLOCK_SKEW_MS
+    && logStartedAt <= sessionLastActiveAt + OPEN_LOG_CLOCK_SKEW_MS;
 }
 
 function addSkipped(plan, pathGroup, id, reason) {
@@ -122,7 +150,7 @@ function planUidMigration(state) {
     plan.selected.push({
       pathGroup: 'login_logs',
       id,
-      evidence: isOpen ? 'UNIQUE_IDENTITY_AND_ACTIVE_SESSION' : 'UNIQUE_IDENTITY',
+      evidence: isOpen ? 'UNIQUE_IDENTITY_AND_ACTIVE_SESSION_WINDOW' : 'UNIQUE_IDENTITY',
     });
     if (isOpen) plan.counts.loginLogsOpen += 1;
     else plan.counts.loginLogsClosed += 1;
@@ -134,5 +162,6 @@ function planUidMigration(state) {
 
 module.exports = {
   normalizeIdentity,
+  toEpochMillis,
   planUidMigration,
 };
