@@ -1,0 +1,7 @@
+.github/qa-infra/node_modules/
+.github/qa-infra/.npm-cache/
+.github/qa-infra/*.log
+.github/qa-infra/phase1-qa-report.json
+.github/qa-infra/phase1-qa-report.txt
+.github/qa-infra/network-summary.txt
+.github/qa-infra/frontend-contract-report.json

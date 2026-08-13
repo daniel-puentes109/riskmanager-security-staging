@@ -3,41 +3,152 @@ name: Phase 1 Compatibility QA
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: phase1-compatibility-qa-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   qa-matrix:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+    timeout-minutes: 25
+    environment: phase1-qa
+    env:
+      FIREBASE_AUTH_EMULATOR_HOST: 127.0.0.1:9099
+      FIREBASE_DATABASE_EMULATOR_HOST: 127.0.0.1:9000
+      GCLOUD_PROJECT: demo-risk-manager-qa
+      FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true'
+      PRODUCTION_NETWORK_REQUESTS: '1'
+      QA_NETWORK_ISOLATION: NOT_TESTED
+      F0_F1_STATIC_CONTRACT: NOT_TESTED
 
-      - name: Enforce Network Isolation
-        run: |
-          echo "127.0.0.1 riskops-75637.firebaseio.com" | sudo tee -a /etc/hosts
-          echo "127.0.0.1 riskops-75637.firebasedatabase.app" | sudo tee -a /etc/hosts
-          echo "127.0.0.1 firebaseio.com" | sudo tee -a /etc/hosts
+    steps:
+      - name: Checkout staging QA branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: .github/qa-infra/package-lock.json
 
-      - name: Install Firebase Tools and QA Dependencies
+      - name: Setup Java for Realtime Database Emulator
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Verify runner and emulator targets
+        shell: bash
         run: |
-          npm install -g firebase-tools
-          cd qa/phase1/tests
-          npm install
+          set -euo pipefail
+          node --version
+          npm --version
+          java -version
+          test "$FIREBASE_AUTH_EMULATOR_HOST" = "127.0.0.1:9099"
+          test "$FIREBASE_DATABASE_EMULATOR_HOST" = "127.0.0.1:9000"
+          test "$GCLOUD_PROJECT" = "demo-risk-manager-qa"
 
-      - name: Run Firebase Emulators and QA Matrix
+      - name: Install pinned QA dependencies
+        working-directory: .github/qa-infra
+        run: npm ci --ignore-scripts
+
+      - name: Run deterministic migration unit tests
+        working-directory: .github/qa-infra
+        run: npm run check
+
+      - name: Prepare Realtime Database Emulator binary
+        working-directory: .github/qa-infra
+        run: npx firebase setup:emulators:database
+
+      - name: Decode and verify rules without logging content
+        id: rules
+        shell: bash
+        env:
+          R0_B64: ${{ secrets.R0_RULES_B64 }}
+          R1_GZIP_B64: ${{ secrets.R1_RULES_GZIP_B64 }}
         run: |
-          cd qa/phase1/tests
-          # Start emulators and run tests
-          firebase emulators:exec "node qa_matrix.js" --project demo-risk-manager-qa
+          set -euo pipefail
+          test -n "$R0_B64"
+          test -n "$R1_GZIP_B64"
+          printf '%s' "$R0_B64" | base64 --decode > "$RUNNER_TEMP/r0.json"
+          printf '%s' "$R1_GZIP_B64" | base64 --decode | gzip --decompress > "$RUNNER_TEMP/r1.json"
+          chmod 600 "$RUNNER_TEMP/r0.json" "$RUNNER_TEMP/r1.json"
+          R0_SHA="$(sha256sum "$RUNNER_TEMP/r0.json" | cut -d ' ' -f 1)"
+          R1_SHA="$(sha256sum "$RUNNER_TEMP/r1.json" | cut -d ' ' -f 1)"
+          test "$R0_SHA" = "3730f88e2b3f65841bf8ac92d6d53ac761a0449396da6294fb6f1dae53d7fe2d"
+          test "$R1_SHA" = "73da618eaa770025306a74521daea4a1ceb852d0169c83ca45cfa48251c991fd"
+          echo "R0_SHA256=$R0_SHA"
+          echo "R1_SHA256=$R1_SHA"
 
-      - name: Upload QA Artifacts
-        if: always()
-        uses: actions/upload-artifact@v3
+      - name: Extract and verify F0/F1 static contracts
+        shell: bash
+        env:
+          F0_APP_PATH: ${{ runner.temp }}/app_f0.js
+          F1_APP_PATH: ${{ runner.temp }}/app_f1.js
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/source"
+          git -C "$RUNNER_TEMP/source" remote add origin https://github.com/VirtualSoft026/riesgovirtualsoft.git
+          git -C "$RUNNER_TEMP/source" fetch --depth=1 origin 7046de65c52245294fa5cdfdce8e40dde5f0fa34
+          git -C "$RUNNER_TEMP/source" show FETCH_HEAD:app.js > "$F0_APP_PATH"
+          cp "$GITHUB_WORKSPACE/app.js" "$F1_APP_PATH"
+          cd .github/qa-infra
+          node verify_frontend_contract.js
+          echo "F0_F1_STATIC_CONTRACT=VERIFIED_EXECUTED" >> "$GITHUB_ENV"
+
+      - name: Verify local-only network guard
+        working-directory: .github/qa-infra
+        shell: bash
+        env:
+          NODE_OPTIONS: --require=${{ github.workspace }}/.github/qa-infra/network_guard.cjs
+        run: |
+          node verify_network_guard.js > network-summary.txt
+          echo "QA_NETWORK_ISOLATION=VERIFIED_EXECUTED" >> "$GITHUB_ENV"
+          echo "PRODUCTION_NETWORK_REQUESTS=0" >> "$GITHUB_ENV"
+
+      - name: Run Firebase Emulator compatibility matrix
+        working-directory: .github/qa-infra
+        shell: bash
+        env:
+          NODE_OPTIONS: --require=${{ github.workspace }}/.github/qa-infra/network_guard.cjs
+          R0_PATH: ${{ runner.temp }}/r0.json
+          R1_PATH: ${{ runner.temp }}/r1.json
+        run: |
+          set -euo pipefail
+          npx firebase --version
+          npm run qa
+
+      - name: Validate sanitized artifacts
+        if: success()
+        working-directory: .github/qa-infra
+        run: |
+          node sanitize_reports.js
+          cat phase1-qa-report.txt
+
+      - name: Upload sanitized QA artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
           name: phase1-qa-artifacts
+          if-no-files-found: error
+          retention-days: 14
           path: |
-            qa/phase1/tests/phase1-qa-report.txt
-            qa/phase1/tests/phase1-qa-report.json
+            .github/qa-infra/phase1-qa-report.json
+            .github/qa-infra/phase1-qa-report.txt
+            .github/qa-infra/network-summary.txt
+            .github/qa-infra/frontend-contract-report.json
+
+      - name: Cleanup ephemeral rules and source files
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/r0.json" "$RUNNER_TEMP/r1.json"
+          rm -f "$RUNNER_TEMP/app_f0.js" "$RUNNER_TEMP/app_f1.js"
+          rm -rf "$RUNNER_TEMP/source"
