@@ -10,6 +10,12 @@ function escapeHTML(str) {
 }
 window.escapeHTML = escapeHTML;
 
+// Encode dynamic values before placing them inside single-quoted inline handlers.
+// encodeURIComponent intentionally leaves apostrophes untouched, so encode them too.
+function encodeInlineHandlerArg(value) {
+    return encodeURIComponent(String(value)).replace(/'/g, '%27');
+}
+
 const ANNOUNCEMENT_ALLOWED_TAGS = new Set(['p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'a']);
 const ANNOUNCEMENT_DROP_CONTENT_TAGS = new Set([
     'script', 'style', 'iframe', 'object', 'embed', 'template', 'noscript'
@@ -1664,7 +1670,7 @@ async function loadPermisos() {
                 }
 
                 historicoContainer.innerHTML += `
-                    <div class="tree-item" style="margin-top: 10px; cursor: pointer; transition: all 0.2s ease; border-radius: 8px;" onclick="openPermisoDetailModal('${escapeHTML(p.fb_id)}')" title="Haz clic para ver el detalle completo de este permiso">
+                    <div class="tree-item" style="margin-top: 10px; cursor: pointer; transition: all 0.2s ease; border-radius: 8px;" onclick="openPermisoDetailModal(decodeURIComponent('${encodeInlineHandlerArg(p.fb_id)}'))" title="Haz clic para ver el detalle completo de este permiso">
                         <div class="tree-header" style="padding: 12px; display: flex; align-items: center; gap: 10px;">
                             <i class='bx ${icon}' style="font-size: 20px;"></i>
                             <div style="display:flex; flex-direction:column; flex: 1;">
@@ -1818,7 +1824,7 @@ function renderTree(tasksBySet) {
                         else if (statusText === 'No Realizada') statusClass = 'status-not-done';
                     }
                     return `
-                    <div class="task-item" onclick="selectTask(${task.id})">
+                    <div class="task-item" onclick="selectTask(decodeURIComponent('${encodeInlineHandlerArg(task.id)}'))">
                         <i class='bx bx-file-blank'></i> ${escapeHTML(task.name)}
                         <div class="task-status ${statusClass}"></div>
                     </div>
@@ -3312,15 +3318,15 @@ async function renderPendingUsers() {
             actionHtml = `<span style="color: var(--danger); font-weight: bold;"><i class='bx bx-x'></i> Rechazado</span>`;
         } else {
             actionHtml = `
-                <div id="user-action-btns-${user.id}" style="display:flex; justify-content:center; gap:5px;">
-                    <button class="btn btn-success" style="padding: 5px 10px; font-size: 12px;" onclick="approveUser('${user.id}')">Aprobar</button>
-                    <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" onclick="showUserRejectBox('${user.id}')">Rechazar</button>
+                <div id="user-action-btns-${escapeHTML(user.id)}" style="display:flex; justify-content:center; gap:5px;">
+                    <button class="btn btn-success" style="padding: 5px 10px; font-size: 12px;" onclick="approveUser(decodeURIComponent('${encodeInlineHandlerArg(user.id)}'))">Aprobar</button>
+                    <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px;" onclick="showUserRejectBox(decodeURIComponent('${encodeInlineHandlerArg(user.id)}'))">Rechazar</button>
                 </div>
-                <div id="user-reject-box-${user.id}" style="display:none; flex-direction:column; gap:5px; margin-top:5px;">
-                    <input type="text" id="user-reason-${user.id}" placeholder="Motivo de rechazo" class="modern-input" style="padding:4px; font-size:11px; width:100%;">
+                <div id="user-reject-box-${escapeHTML(user.id)}" style="display:none; flex-direction:column; gap:5px; margin-top:5px;">
+                    <input type="text" id="user-reason-${escapeHTML(user.id)}" placeholder="Motivo de rechazo" class="modern-input" style="padding:4px; font-size:11px; width:100%;">
                     <div style="display:flex; gap:5px; justify-content:center;">
-                        <button class="btn btn-danger" style="padding: 2px 5px; font-size: 10px;" onclick="confirmRejectUser('${user.id}')">Confirmar</button>
-                        <button class="btn btn-outline" style="padding: 2px 5px; font-size: 10px;" onclick="cancelRejectUser('${user.id}')">Cancelar</button>
+                        <button class="btn btn-danger" style="padding: 2px 5px; font-size: 10px;" onclick="confirmRejectUser(decodeURIComponent('${encodeInlineHandlerArg(user.id)}'))">Confirmar</button>
+                        <button class="btn btn-outline" style="padding: 2px 5px; font-size: 10px;" onclick="cancelRejectUser(decodeURIComponent('${encodeInlineHandlerArg(user.id)}'))">Cancelar</button>
                     </div>
                 </div>
             `;
@@ -3466,23 +3472,23 @@ async function renderPendingPermissions() {
                 </td>
                 <td style="padding: 12px; text-align: center; min-width: 220px;">
                     <div id="perm-action-btns-${escapeHTML(p.fb_id)}" style="display:flex; justify-content:center; gap:8px;">
-                        <button class="btn btn-success" style="padding: 6px 14px; font-size: 12px; display:inline-flex; align-items:center; gap:4px;" onclick="showPermApproveBox('${escapeHTML(p.fb_id)}')"><i class='bx bx-check' style="font-size:16px;"></i> Aprobar</button>
-                        <button class="btn btn-danger" style="padding: 6px 14px; font-size: 12px; display:inline-flex; align-items:center; gap:4px;" onclick="showPermRejectBox('${escapeHTML(p.fb_id)}')"><i class='bx bx-x' style="font-size:16px;"></i> Rechazar</button>
+                        <button class="btn btn-success" style="padding: 6px 14px; font-size: 12px; display:inline-flex; align-items:center; gap:4px;" onclick="showPermApproveBox(decodeURIComponent('${encodeInlineHandlerArg(p.fb_id)}'))"><i class='bx bx-check' style="font-size:16px;"></i> Aprobar</button>
+                        <button class="btn btn-danger" style="padding: 6px 14px; font-size: 12px; display:inline-flex; align-items:center; gap:4px;" onclick="showPermRejectBox(decodeURIComponent('${encodeInlineHandlerArg(p.fb_id)}'))"><i class='bx bx-x' style="font-size:16px;"></i> Rechazar</button>
                     </div>
                     <div id="perm-approve-box-${escapeHTML(p.fb_id)}" style="display:none; flex-direction:column; gap:8px; margin-top:5px; background: rgba(16, 185, 129, 0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.3);">
                         <label style="font-size:11px; font-weight:600; color:var(--success); text-align:left;">Observación de aprobación:</label>
                         <textarea id="perm-approve-reason-${escapeHTML(p.fb_id)}" placeholder="Escribe un comentario u observación para el gestor..." class="modern-input" style="padding:8px; font-size:12px; width:100%; min-height:60px; resize:vertical; box-sizing:border-box; border-radius:6px; font-family:inherit;"></textarea>
                         <div style="display:flex; gap:6px; justify-content:flex-end;">
-                            <button class="btn btn-success" style="padding: 5px 12px; font-size: 11px;" onclick="confirmApprovePerm('${escapeHTML(p.fb_id)}')">Confirmar Aprobar</button>
-                            <button class="btn btn-outline" style="padding: 5px 10px; font-size: 11px;" onclick="cancelApprovePerm('${escapeHTML(p.fb_id)}')">Cancelar</button>
+                            <button class="btn btn-success" style="padding: 5px 12px; font-size: 11px;" onclick="confirmApprovePerm(decodeURIComponent('${encodeInlineHandlerArg(p.fb_id)}'))">Confirmar Aprobar</button>
+                            <button class="btn btn-outline" style="padding: 5px 10px; font-size: 11px;" onclick="cancelApprovePerm(decodeURIComponent('${encodeInlineHandlerArg(p.fb_id)}'))">Cancelar</button>
                         </div>
                     </div>
                     <div id="perm-reject-box-${escapeHTML(p.fb_id)}" style="display:none; flex-direction:column; gap:8px; margin-top:5px; background: rgba(239, 68, 68, 0.08); padding: 10px; border-radius: 8px; border: 1px solid rgba(239, 68, 68, 0.3);">
                         <label style="font-size:11px; font-weight:600; color:var(--danger); text-align:left;">Motivo de rechazo:</label>
                         <textarea id="perm-reason-${escapeHTML(p.fb_id)}" placeholder="Escribe la razón por la cual se rechaza..." class="modern-input" style="padding:8px; font-size:12px; width:100%; min-height:60px; resize:vertical; box-sizing:border-box; border-radius:6px; font-family:inherit;"></textarea>
                         <div style="display:flex; gap:6px; justify-content:flex-end;">
-                            <button class="btn btn-danger" style="padding: 5px 12px; font-size: 11px;" onclick="confirmRejectPerm('${escapeHTML(p.fb_id)}')">Confirmar Rechazo</button>
-                            <button class="btn btn-outline" style="padding: 5px 10px; font-size: 11px;" onclick="cancelRejectPerm('${escapeHTML(p.fb_id)}')">Cancelar</button>
+                            <button class="btn btn-danger" style="padding: 5px 12px; font-size: 11px;" onclick="confirmRejectPerm(decodeURIComponent('${encodeInlineHandlerArg(p.fb_id)}'))">Confirmar Rechazo</button>
+                            <button class="btn btn-outline" style="padding: 5px 10px; font-size: 11px;" onclick="cancelRejectPerm(decodeURIComponent('${encodeInlineHandlerArg(p.fb_id)}'))">Cancelar</button>
                         </div>
                     </div>
                 </td>
@@ -3837,10 +3843,10 @@ function applyShiftReportsFilters() {
                 </td>
                 <td style="padding: 12px; text-align: center; white-space: nowrap;">
                     <div style="display: flex; gap: 6px; justify-content: center;">
-                        <button class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;" onclick="openShiftDetailModal('${escapeHTML(r.fb_id)}')" title="Ver todo el informe igual al correo">
+                        <button class="btn btn-primary" style="padding: 5px 10px; font-size: 12px;" onclick="openShiftDetailModal(decodeURIComponent('${encodeInlineHandlerArg(r.fb_id)}'))" title="Ver todo el informe igual al correo">
                             <i class='bx bx-show'></i> Ver Todo
                         </button>
-                        <button class="btn btn-outline" style="padding: 5px 10px; font-size: 12px;" onclick="exportShiftReport('${escapeHTML(r.fb_id)}')" title="Exportar PDF">
+                        <button class="btn btn-outline" style="padding: 5px 10px; font-size: 12px;" onclick="exportShiftReport(decodeURIComponent('${encodeInlineHandlerArg(r.fb_id)}'))" title="Exportar PDF">
                             <i class='bx bx-file-blank'></i> PDF
                         </button>
                     </div>
@@ -4486,7 +4492,7 @@ function renderActiveSessionsDashboard() {
         card.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: start; gap: 8px;">
                 <div class="monitoreo-user-info">
-                    <img src="${avatarSrc}" alt="${fullName}" class="monitoreo-avatar" onerror="this.onerror=null; this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=0D8ABC&color=fff';">
+                    <img class="monitoreo-avatar">
                     <div class="monitoreo-details">
                         <span class="monitoreo-name">${escapeHTML(fullName)}</span>
                         <span class="monitoreo-meta">${escapeHTML(session.email || '')}</span>
@@ -4530,14 +4536,23 @@ function renderActiveSessionsDashboard() {
             ${tasksHtml}
 
             <div style="margin-top: 15px; display: flex; gap: 5px; justify-content: flex-end;">
-                <button class="btn btn-outline" style="flex: 1; padding: 6px 10px; font-size: 11px; display: flex; align-items: center; justify-content: center; gap: 4px;" onclick="openMonitoreoDetails('${uid}')">
+                <button class="btn btn-outline" style="flex: 1; padding: 6px 10px; font-size: 11px; display: flex; align-items: center; justify-content: center; gap: 4px;" onclick="openMonitoreoDetails(decodeURIComponent('${encodeInlineHandlerArg(uid)}'))">
                     <i class='bx bx-search-alt-2'></i> Detalles
                 </button>
-                <button class="btn btn-outline" style="flex: 1; padding: 6px 10px; font-size: 11px; display: flex; align-items: center; justify-content: center; gap: 4px; border-color: var(--warning); color: var(--warning);" onclick="viewTimelineInMonitoreo('${uid}')">
+                <button class="btn btn-outline" style="flex: 1; padding: 6px 10px; font-size: 11px; display: flex; align-items: center; justify-content: center; gap: 4px; border-color: var(--warning); color: var(--warning);" onclick="viewTimelineInMonitoreo(decodeURIComponent('${encodeInlineHandlerArg(uid)}'))">
                     <i class='bx bx-time'></i> Bitácora
                 </button>
             </div>
         `;
+        const avatarElement = card.querySelector('.monitoreo-avatar');
+        if (avatarElement) {
+            const fallbackAvatarSrc = `https://ui-avatars.com/api/?name=${encodeURIComponent(fullName)}&background=0D8ABC&color=fff`;
+            avatarElement.alt = fullName;
+            avatarElement.addEventListener('error', () => {
+                avatarElement.src = fallbackAvatarSrc;
+            }, { once: true });
+            avatarElement.src = avatarSrc;
+        }
         grid.appendChild(card);
     });
 }
@@ -5678,7 +5693,7 @@ function renderGestorComunicados() {
         if (isRead) {
             actionsHtml = `<div style="color: var(--success); font-size: 13px; margin-top: 15px; font-weight: 500;"><i class='bx bx-check-double'></i> Leído el ${new Date(c.readBy[uid].readAt).toLocaleString('es-CO')}</div>`;
         } else {
-            actionsHtml = `<button class="btn btn-primary" style="margin-top: 15px; width: 100%; max-width: 300px; background: var(--success); border-color: var(--success);" onclick="markComunicadoAsRead('${escapeHTML(key)}')"><i class='bx bx-check'></i> Marcar como Leído y Entendido</button>`;
+            actionsHtml = `<button class="btn btn-primary" style="margin-top: 15px; width: 100%; max-width: 300px; background: var(--success); border-color: var(--success);" onclick="markComunicadoAsRead(decodeURIComponent('${encodeInlineHandlerArg(key)}'))"><i class='bx bx-check'></i> Marcar como Leído y Entendido</button>`;
         }
         
         list.innerHTML += `
@@ -5782,14 +5797,14 @@ function renderAdminComunicados() {
             <tr style="border-bottom: 1px solid var(--glass-border);">
                 <td style="padding: 12px; font-size: 13px;">${formattedDate}</td>
                 <td style="padding: 12px; font-weight: 500;">
-                    <a href="javascript:void(0)" onclick="viewComunicadoContent('${escapeHTML(key)}')" style="color: var(--accent-primary); text-decoration: none; cursor: pointer; transition: color 0.2s;" onmouseover="this.style.textDecoration='underline'; this.style.color='var(--text-primary)'" onmouseout="this.style.textDecoration='none'; this.style.color='var(--accent-primary)'">${escapeHTML(c.title)}</a>
+                    <a href="javascript:void(0)" onclick="viewComunicadoContent(decodeURIComponent('${encodeInlineHandlerArg(key)}'))" style="color: var(--accent-primary); text-decoration: none; cursor: pointer; transition: color 0.2s;" onmouseover="this.style.textDecoration='underline'; this.style.color='var(--text-primary)'" onmouseout="this.style.textDecoration='none'; this.style.color='var(--accent-primary)'">${escapeHTML(c.title)}</a>
                 </td>
                 <td style="padding: 12px; color: var(--text-secondary); font-size: 13px;">${escapeHTML(c.author)}</td>
                 <td style="padding: 12px; text-align: center;"><span class="badge" style="background: var(--success);">${readCount} lecturas</span></td>
                 <td style="padding: 12px; text-align: center;">
-                    <button class="btn btn-outline" style="padding: 5px 10px; font-size: 12px;" onclick="viewComunicadoContent('${escapeHTML(key)}')"><i class='bx bx-book-open'></i> Leer</button>
-                    <button class="btn btn-outline" style="padding: 5px 10px; font-size: 12px; margin-left: 5px;" onclick="viewComunicadoLecturas('${escapeHTML(key)}')"><i class='bx bx-user-check'></i> Lecturas</button>
-                    <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px; margin-left: 5px;" onclick="deleteComunicado('${escapeHTML(key)}')"><i class='bx bx-trash'></i></button>
+                    <button class="btn btn-outline" style="padding: 5px 10px; font-size: 12px;" onclick="viewComunicadoContent(decodeURIComponent('${encodeInlineHandlerArg(key)}'))"><i class='bx bx-book-open'></i> Leer</button>
+                    <button class="btn btn-outline" style="padding: 5px 10px; font-size: 12px; margin-left: 5px;" onclick="viewComunicadoLecturas(decodeURIComponent('${encodeInlineHandlerArg(key)}'))"><i class='bx bx-user-check'></i> Lecturas</button>
+                    <button class="btn btn-danger" style="padding: 5px 10px; font-size: 12px; margin-left: 5px;" onclick="deleteComunicado(decodeURIComponent('${encodeInlineHandlerArg(key)}'))"><i class='bx bx-trash'></i></button>
                 </td>
             </tr>
         `;
