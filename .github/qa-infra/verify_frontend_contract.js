@@ -16,7 +16,7 @@ const inputs = [
   {
     label: 'F1',
     env: 'F1_APP_PATH',
-    sha: 'f4b5d15422346ae4513b454434fd7485c5413875cac5e169c1bea2b4b1573a0e',
+    sha: '2ebee328f9e22120d2ffe9092afe43e48d76d364df943e25b5ec7ad67d807340',
     mustContain: [
       "uid: userUid",
       "uid: currentUser.uid || firebase.auth().currentUser.uid",
